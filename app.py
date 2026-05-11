@@ -61,6 +61,13 @@ hr { border: none; height: 1px; background: rgba(212,175,55,.22); }
 .login-title { color:#f7d774; font-size:34px; font-weight:900; margin-top:16px; }
 .login-sub { color:#d9d1b3; margin-bottom:18px; }
 .badge { display:inline-block; padding:7px 12px; border-radius:999px; background:rgba(212,175,55,.15); border:1px solid rgba(212,175,55,.35); color:#f7d774; font-weight:800; font-size:12px; }
+.chat-panel { background: linear-gradient(180deg, rgba(24,24,24,.98), rgba(9,9,9,.98)); border: 1px solid rgba(212,175,55,.24); border-radius: 22px; padding: 18px; box-shadow: 0 18px 42px rgba(0,0,0,.30); }
+.chat-message { padding: 12px 14px; border-radius: 16px; margin-bottom: 10px; border: 1px solid rgba(212,175,55,.14); background: rgba(255,255,255,.035); }
+.chat-own { background: rgba(212,175,55,.12); border-color: rgba(212,175,55,.32); }
+.chat-author { color:#f7d774; font-weight:900; font-size:13px; }
+.chat-meta { color:#9f9678; font-size:11px; margin-bottom:6px; }
+.chat-text { color:#fff7d6; font-size:14px; line-height:1.35; }
+.online-dot { display:inline-block; width:9px; height:9px; border-radius:50%; background:#24d17e; margin-right:7px; box-shadow:0 0 12px rgba(36,209,126,.75); }
 </style>
 """, unsafe_allow_html=True)
 
@@ -86,6 +93,15 @@ def init_db():
         estado TEXT,
         fecha TEXT
     )''')
+    c.execute('''CREATE TABLE IF NOT EXISTS chat_mensajes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        fecha TEXT,
+        usuario TEXT,
+        destino TEXT,
+        canal TEXT,
+        mensaje TEXT,
+        adjunto TEXT
+    )''')
     c.commit()
     if pd.read_sql("SELECT COUNT(*) as n FROM productos", c)["n"].iloc[0] == 0:
         demo = [
@@ -101,6 +117,15 @@ def init_db():
             (codigo,nombre,categoria,marca,precio_compra,precio_venta,stock,stock_minimo,proveedor,estado,fecha)
             VALUES (?,?,?,?,?,?,?,?,?,?,?)""", (*x, datetime.now().strftime("%Y-%m-%d")))
         c.commit()
+    if pd.read_sql("SELECT COUNT(*) as n FROM chat_mensajes", c)["n"].iloc[0] == 0:
+        mensajes_demo = [
+            (datetime.now().strftime("%Y-%m-%d %H:%M"), "Jefe", "Todos", "General", "Buen día equipo. Revisemos pedidos pendientes antes de las 11:00.", ""),
+            (datetime.now().strftime("%Y-%m-%d %H:%M"), "Depósito", "Todos", "General", "Stock de gaseosas bajo. Quedan pocas unidades para reparto.", ""),
+            (datetime.now().strftime("%Y-%m-%d %H:%M"), "Chofer Martín", "Todos", "Logística", "Salgo para CABA con pedidos PED-2041 y PED-2043.", ""),
+            (datetime.now().strftime("%Y-%m-%d %H:%M"), "Administración", "Jefe", "Privado", "Mayorista San Telmo quedó con saldo pendiente para seguimiento.", ""),
+        ]
+        c.executemany("INSERT INTO chat_mensajes (fecha,usuario,destino,canal,mensaje,adjunto) VALUES (?,?,?,?,?,?)", mensajes_demo)
+        c.commit()
     c.close()
 
 init_db()
@@ -113,6 +138,23 @@ def add_producto(data):
     c.execute("""INSERT OR REPLACE INTO productos
     (codigo,nombre,categoria,marca,precio_compra,precio_venta,stock,stock_minimo,proveedor,estado,fecha)
     VALUES (?,?,?,?,?,?,?,?,?,?,?)""", data)
+    c.commit(); c.close()
+
+def get_chat(canal="General", destino="Todos"):
+    c = con()
+    if canal == "Privado":
+        df = pd.read_sql("""SELECT * FROM chat_mensajes
+                         WHERE canal='Privado' AND (destino=? OR usuario=? OR destino='Jefe')
+                         ORDER BY id DESC LIMIT 60""", c, params=(destino, destino))
+    else:
+        df = pd.read_sql("SELECT * FROM chat_mensajes WHERE canal=? ORDER BY id DESC LIMIT 60", c, params=(canal,))
+    c.close()
+    return df.sort_values("id") if not df.empty else df
+
+def add_chat(usuario, destino, canal, mensaje, adjunto=""):
+    c = con()
+    c.execute("INSERT INTO chat_mensajes (fecha,usuario,destino,canal,mensaje,adjunto) VALUES (?,?,?,?,?,?)",
+              (datetime.now().strftime("%Y-%m-%d %H:%M"), usuario, destino, canal, mensaje, adjunto))
     c.commit(); c.close()
 
 # ============================================================
@@ -151,6 +193,7 @@ movimientos = pd.DataFrame({
 # ============================================================
 if "logged" not in st.session_state: st.session_state.logged = False
 if "page" not in st.session_state: st.session_state.page = "Inicio"
+if "usuario_demo" not in st.session_state: st.session_state.usuario_demo = "Jefe"
 
 # ============================================================
 # COMPONENTES
@@ -183,7 +226,7 @@ def sidebar():
         st.markdown('<span class="badge">DEMO COMERCIAL</span>', unsafe_allow_html=True)
         st.markdown("---")
         pages = {
-            "Inicio":"🏠", "Productos":"📦", "Ventas":"🧾", "Clientes":"👥", "Caja":"💰", "Logística":"🚚", "Reportes":"📊", "Inteligencia":"🧠", "Configuración":"⚙️"
+            "Inicio":"🏠", "Productos":"📦", "Ventas":"🧾", "Clientes":"👥", "Caja":"💰", "Logística":"🚚", "Chat interno":"💬", "Reportes":"📊", "Inteligencia":"🧠", "Configuración":"⚙️"
         }
         for p, icon in pages.items():
             if st.button(f"{icon} {p}", use_container_width=True):
@@ -324,6 +367,61 @@ def page_logistica():
     st.plotly_chart(fig, use_container_width=True)
     st.success("Demo visual: seguimiento de pedidos, zonas, choferes y confirmación de entrega.")
 
+
+def page_chat():
+    header("Chat interno", "Comunicación entre jefe, empleados, depósito, caja, ventas y logística.")
+    usuarios = ["Jefe", "Administración", "Ventas", "Depósito", "Caja", "Chofer Martín", "Chofer Lucas", "Sucursal Norte", "Sucursal Sur"]
+    col_a, col_b, col_c = st.columns([1,1,1])
+    with col_a:
+        st.session_state.usuario_demo = st.selectbox("Ingresar como", usuarios, index=usuarios.index(st.session_state.usuario_demo) if st.session_state.usuario_demo in usuarios else 0)
+    with col_b:
+        canal = st.selectbox("Canal", ["General", "Logística", "Ventas", "Depósito", "Privado"])
+    with col_c:
+        destino = st.selectbox("Destinatario", ["Todos"] + [u for u in usuarios if u != st.session_state.usuario_demo])
+
+    st.markdown('<div class="section-title">💬 Conversaciones de trabajo</div>', unsafe_allow_html=True)
+    left, right = st.columns([2.2, .8])
+    with left:
+        st.markdown('<div class="chat-panel">', unsafe_allow_html=True)
+        dfchat = get_chat(canal, destino)
+        if dfchat.empty:
+            st.info("Todavía no hay mensajes en este canal.")
+        else:
+            for _, r in dfchat.tail(18).iterrows():
+                own = " chat-own" if r["usuario"] == st.session_state.usuario_demo else ""
+                adj = f'<div class="chat-meta">📎 Adjunto: {r["adjunto"]}</div>' if str(r.get("adjunto", "")).strip() else ""
+                st.markdown(f"""
+                <div class="chat-message{own}">
+                    <div class="chat-author">{r['usuario']} → {r['destino']}</div>
+                    <div class="chat-meta">{r['fecha']} · Canal {r['canal']}</div>
+                    <div class="chat-text">{r['mensaje']}</div>
+                    {adj}
+                </div>
+                """, unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        with st.form("form_chat", clear_on_submit=True):
+            mensaje = st.text_area("Escribir mensaje", placeholder="Ej: Juan, prepará el pedido PED-2048 para GBA Oeste...")
+            archivo = st.file_uploader("Adjuntar archivo demo", type=["png", "jpg", "jpeg", "pdf", "xlsx", "csv"], label_visibility="collapsed")
+            enviar = st.form_submit_button("Enviar mensaje", use_container_width=True)
+            if enviar:
+                if mensaje.strip():
+                    nombre_archivo = archivo.name if archivo is not None else ""
+                    add_chat(st.session_state.usuario_demo, destino, canal, mensaje.strip(), nombre_archivo)
+                    st.success("Mensaje enviado correctamente.")
+                    st.rerun()
+                else:
+                    st.error("Escribí un mensaje antes de enviar.")
+
+    with right:
+        st.markdown('<div class="section-title">🟢 Equipo online</div>', unsafe_allow_html=True)
+        for u in usuarios:
+            st.markdown(f'<div class="chat-message"><span class="online-dot"></span><b>{u}</b><div class="chat-meta">Disponible ahora</div></div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">🔔 Alertas internas</div>', unsafe_allow_html=True)
+        st.warning("2 pedidos necesitan confirmación de depósito.")
+        st.info("1 comprobante pendiente de administración.")
+        st.success("Reparto CABA en curso.")
+
 def page_reportes():
     header("Reportes", "Informes exportables para toma de decisiones.")
     option = st.selectbox("Reporte", ["Ventas mensuales", "Stock", "Clientes", "Caja", "Logística"])
@@ -366,6 +464,7 @@ else:
     elif page == "Clientes": page_clientes()
     elif page == "Caja": page_caja()
     elif page == "Logística": page_logistica()
+    elif page == "Chat interno": page_chat()
     elif page == "Reportes": page_reportes()
     elif page == "Inteligencia": page_inteligencia()
     elif page == "Configuración": page_config()
