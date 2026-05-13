@@ -1,470 +1,229 @@
-# app.py
-# ============================================================
-# DEL CAMPO DISTRIBUIDORA - DEMO PREMIUM
-# Streamlit + Pandas + Plotly + SQLite básico
-# ============================================================
 
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import sqlite3
-from datetime import datetime, date, timedelta
-from pathlib import Path
 import random
 
+st.set_page_config(page_title="DEL CAMPO DISTRIBUIDORA", page_icon="🏢", layout="wide", initial_sidebar_state="expanded")
+
 APP_NAME = "DEL CAMPO DISTRIBUIDORA"
-DB_PATH = "del_campo_demo.db"
+DEMO_USER = "demo"
+DEMO_PASS = "demo123"
+WHATSAPP_LINK = "https://wa.me/TUNUMERO?text=Hola,%20quiero%20solicitar%20acceso%20completo%20a%20la%20demo%20de%20DEL%20CAMPO%20DISTRIBUIDORA"
 
-st.set_page_config(
-    page_title=APP_NAME,
-    page_icon="DC",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+random.seed(7)
+productos = pd.DataFrame({
+    "Código": ["P-1001","P-1002","P-1003","P-1004","P-1005","P-1006","P-1007","P-1008"],
+    "Producto": ["Harina 000 x 25kg","Aceite girasol 900ml","Azúcar 1kg","Yerba mate 1kg","Arroz largo fino 1kg","Fideos 500g","Leche 1L","Gaseosa 2.25L"],
+    "Categoría": ["Harinas","Almacén","Almacén","Infusiones","Almacén","Pastas","Lácteos","Bebidas"],
+    "Proveedor": ["Molino del Sur","Aceitera Norte","Dulce Campo","Yerbas del Litoral","Granos SRL","Pastas Centro","Lácteos Norte","Bebidas Premium"],
+    "Stock": [380,155,90,52,430,220,71,39],
+    "Stock mínimo": [120,80,100,60,150,100,80,60],
+    "Precio venta": [18500,1950,1350,4600,1450,1050,1250,2850],
+    "Estado": ["OK","OK","Bajo","Bajo","OK","OK","Bajo","Crítico"]
+})
+clientes = pd.DataFrame({
+    "Cliente": ["Autoservicio Sol","Kiosco Central","Despensa Norte","Mayorista Río","Almacén Don Luis","Supermercado Avenida","Distribuidora Oeste"],
+    "Zona": ["CABA","GBA Sur","GBA Norte","CABA","GBA Oeste","GBA Norte","GBA Oeste"],
+    "Tipo": ["Comercio","Minorista","Comercio","Mayorista","Comercio","Mayorista","Revendedor"],
+    "Estado": ["Activo","Activo","Inactivo","Activo","Activo","Activo","Activo"],
+    "Deuda": [120000,45000,0,280000,90000,160000,75000],
+    "Última compra": ["2026-05-10","2026-05-09","2026-03-18","2026-05-08","2026-05-07","2026-05-11","2026-05-06"]
+})
+ventas_mes = pd.DataFrame({"Día": list(range(1,31)), "Ventas": [random.randint(180000,620000) for _ in range(30)], "Ganancia": [random.randint(45000,210000) for _ in range(30)]})
+ventas_categoria = pd.DataFrame({"Categoría": ["Almacén","Harinas","Bebidas","Lácteos","Pastas","Infusiones"], "Importe": [4200000,3600000,2100000,1450000,980000,760000]})
+pedidos = pd.DataFrame({
+    "Pedido": ["PED-2401","PED-2402","PED-2403","PED-2404","PED-2405","PED-2406"],
+    "Cliente": ["Autoservicio Sol","Kiosco Central","Mayorista Río","Almacén Don Luis","Supermercado Avenida","Distribuidora Oeste"],
+    "Estado": ["Pendiente","En preparación","En reparto","Entregado","Pendiente","En reparto"],
+    "Importe": [250000,98000,430000,125000,345000,287000],
+    "Zona": ["CABA","GBA Sur","CABA","GBA Oeste","GBA Norte","GBA Oeste"]
+})
+rutas = pd.DataFrame({"Ruta":["Ruta CABA","Ruta GBA Norte","Ruta GBA Sur","Ruta Oeste"],"Chofer":["Martín Gómez","Lucas Pérez","Diego Suárez","Sergio Díaz"],"Vehículo":["Furgón 01","Camión 02","Furgón 03","Camión 04"],"Pedidos":[14,9,11,8],"Estado":["En reparto","Pendiente","En preparación","En reparto"],"Entrega estimada":["17:30","18:10","16:45","19:00"]})
+chat_demo = pd.DataFrame({"Hora":["09:12","09:34","10:05","10:28","11:15"],"Canal":["General","Logística","Privado jefe","Ventas","Depósito"],"Usuario":["Admin","Martín","Laura","Sofía","Nicolás"],"Mensaje":["Revisar pedidos pendientes antes del mediodía.","Ruta CABA salió con 14 entregas.","Cliente Mayorista Río pidió actualización de saldo.","Nueva venta cargada para Autoservicio Sol.","Stock bajo en gaseosas y yerba."]})
 
-# ============================================================
-# CSS PREMIUM NEGRO + DORADO
-# ============================================================
+if "logged" not in st.session_state: st.session_state.logged = False
+if "page" not in st.session_state: st.session_state.page = "Dashboard"
+
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
-
-html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
-.stApp { background: radial-gradient(circle at top left, #2b230f 0%, #0b0b0d 35%, #050506 100%); color: #f5f0df; }
-.block-container { padding-top: 1.4rem; padding-bottom: 3rem; }
-section[data-testid="stSidebar"] { background: linear-gradient(180deg, #060607 0%, #111111 55%, #1b1608 100%); border-right: 1px solid rgba(212,175,55,.28); }
-section[data-testid="stSidebar"] * { color: #f7e7aa !important; }
-
-.main-hero { background: linear-gradient(135deg, rgba(212,175,55,.20), rgba(10,10,10,.96)); border: 1px solid rgba(212,175,55,.35); border-radius: 28px; padding: 30px; box-shadow: 0 24px 60px rgba(0,0,0,.45); margin-bottom: 24px; }
-.hero-title { font-size: 38px; font-weight: 900; color: #f7d774; letter-spacing: -1px; margin: 0; }
-.hero-subtitle { font-size: 16px; color: #d9d1b3; margin-top: 8px; }
-.logo-box { width: 64px; height: 64px; border-radius: 20px; display:flex; align-items:center; justify-content:center; background: linear-gradient(135deg, #f7d774, #9f7928); color:#050506; font-size: 26px; font-weight: 900; box-shadow: 0 0 35px rgba(212,175,55,.35); }
-
-.premium-card { background: linear-gradient(180deg, rgba(25,25,25,.98), rgba(12,12,12,.98)); border: 1px solid rgba(212,175,55,.22); border-radius: 24px; padding: 22px; box-shadow: 0 18px 45px rgba(0,0,0,.35); transition: all .25s ease; min-height: 126px; }
-.premium-card:hover { transform: translateY(-4px); border-color: rgba(247,215,116,.65); box-shadow: 0 22px 55px rgba(212,175,55,.16); }
-.kpi-label { color:#b8ae8a; font-size:13px; font-weight:700; text-transform:uppercase; letter-spacing:.5px; }
-.kpi-value { color:#fff7d6; font-size:31px; font-weight:900; margin-top:8px; }
-.kpi-note { color:#d4af37; font-size:13px; font-weight:700; margin-top:8px; }
-
-.section-title { color:#f7d774; font-size:24px; font-weight:900; margin: 18px 0 12px; }
-.small-muted { color:#b8ae8a; font-size:14px; }
-.module-header { background: linear-gradient(135deg, rgba(212,175,55,.18), rgba(15,15,15,.95)); border:1px solid rgba(212,175,55,.28); border-radius:24px; padding:24px; margin-bottom:20px; box-shadow: 0 16px 40px rgba(0,0,0,.34); }
-.module-header h2 { color:#f7d774; font-size:30px; font-weight:900; margin:0; }
-.module-header p { color:#d9d1b3; margin:8px 0 0; }
-
-.stButton > button { background: linear-gradient(135deg, #d4af37, #8d6d1f) !important; color: #080808 !important; border: none !important; border-radius: 14px !important; font-weight: 900 !important; padding: 0.65rem 1rem !important; box-shadow: 0 10px 25px rgba(212,175,55,.18); }
-.stButton > button:hover { transform: translateY(-2px); box-shadow: 0 14px 35px rgba(212,175,55,.28); }
-[data-testid="stMetric"] { background: linear-gradient(180deg, rgba(25,25,25,.95), rgba(10,10,10,.95)); border: 1px solid rgba(212,175,55,.22); border-radius: 18px; padding: 18px; }
-[data-testid="stDataFrame"] { border: 1px solid rgba(212,175,55,.18); border-radius: 18px; overflow: hidden; }
-hr { border: none; height: 1px; background: rgba(212,175,55,.22); }
-.login-wrap { max-width: 460px; margin: 70px auto 20px; background: linear-gradient(180deg, rgba(25,25,25,.98), rgba(8,8,8,.98)); border: 1px solid rgba(212,175,55,.35); border-radius: 30px; padding: 34px; box-shadow: 0 24px 70px rgba(0,0,0,.50); text-align:center; }
-.login-title { color:#f7d774; font-size:34px; font-weight:900; margin-top:16px; }
-.login-sub { color:#d9d1b3; margin-bottom:18px; }
-.badge { display:inline-block; padding:7px 12px; border-radius:999px; background:rgba(212,175,55,.15); border:1px solid rgba(212,175,55,.35); color:#f7d774; font-weight:800; font-size:12px; }
-.chat-panel { background: linear-gradient(180deg, rgba(24,24,24,.98), rgba(9,9,9,.98)); border: 1px solid rgba(212,175,55,.24); border-radius: 22px; padding: 18px; box-shadow: 0 18px 42px rgba(0,0,0,.30); }
-.chat-message { padding: 12px 14px; border-radius: 16px; margin-bottom: 10px; border: 1px solid rgba(212,175,55,.14); background: rgba(255,255,255,.035); }
-.chat-own { background: rgba(212,175,55,.12); border-color: rgba(212,175,55,.32); }
-.chat-author { color:#f7d774; font-weight:900; font-size:13px; }
-.chat-meta { color:#9f9678; font-size:11px; margin-bottom:6px; }
-.chat-text { color:#fff7d6; font-size:14px; line-height:1.35; }
-.online-dot { display:inline-block; width:9px; height:9px; border-radius:50%; background:#24d17e; margin-right:7px; box-shadow:0 0 12px rgba(36,209,126,.75); }
+html, body, [class*="css"] {font-family:'Inter',sans-serif;}
+.stApp {background: radial-gradient(circle at top left, rgba(212,175,55,.16), transparent 32%), linear-gradient(135deg,#070707 0%,#111 55%,#050505 100%); color:#F8F1D7;}
+section[data-testid="stSidebar"]{background:linear-gradient(180deg,#050505,#111);border-right:1px solid rgba(212,175,55,.28);}
+section[data-testid="stSidebar"] *{color:#F8F1D7!important;}
+[data-testid="stHeader"]{background:rgba(5,5,5,0);}
+.demo-banner{background:linear-gradient(90deg,rgba(212,175,55,.25),rgba(245,213,106,.10));border:1px solid rgba(245,213,106,.45);color:#FFE89A;padding:14px 18px;border-radius:18px;font-weight:800;margin-bottom:18px;box-shadow:0 12px 32px rgba(212,175,55,.10);}
+.card{background:linear-gradient(180deg,rgba(22,22,22,.95),rgba(10,10,10,.95));border:1px solid rgba(212,175,55,.22);border-radius:24px;padding:22px;box-shadow:0 18px 44px rgba(0,0,0,.45);transition:.25s ease;}
+.card:hover{transform:translateY(-3px);border-color:rgba(245,213,106,.45);}
+.kpi-label{color:#bba762;font-size:13px;font-weight:700;text-transform:uppercase;}
+.kpi-value{color:#F5D56A;font-size:30px;font-weight:900;margin-top:4px;}
+.kpi-note{color:#e7dca8;font-size:13px;margin-top:6px;}
+.module-header{background:linear-gradient(135deg,#171717,#080808);border:1px solid rgba(245,213,106,.28);border-radius:26px;padding:24px;margin-bottom:18px;box-shadow:0 20px 55px rgba(0,0,0,.42);}
+.module-header h2{color:#F5D56A;font-size:30px;font-weight:900;margin:0;}
+.module-header p{color:#c8b46a;margin:7px 0 0 0;}
+.locked-box{background:rgba(245,213,106,.08);border:1px dashed rgba(245,213,106,.45);color:#FFE89A;border-radius:18px;padding:16px;margin:12px 0;font-weight:700;}
+.stButton>button{background:linear-gradient(135deg,#B98A1E,#F5D56A);color:#111!important;border:0;border-radius:14px;font-weight:900;padding:12px 18px;}
+.stButton>button:disabled{background:#2b2b2b!important;color:#807244!important;border:1px solid rgba(245,213,106,.18);}
+.stTextInput input,.stNumberInput input,.stSelectbox div[data-baseweb="select"],.stTextArea textarea{background:#111!important;border:1px solid rgba(245,213,106,.25)!important;color:#F8F1D7!important;}
+[data-testid="stMetric"]{background:linear-gradient(180deg,rgba(22,22,22,.95),rgba(10,10,10,.95));border:1px solid rgba(212,175,55,.22);border-radius:20px;padding:18px;}
 </style>
 """, unsafe_allow_html=True)
 
-# ============================================================
-# BASE DE DATOS SIMPLE PARA PRODUCTOS CARGABLES
-# ============================================================
-def con():
-    return sqlite3.connect(DB_PATH, check_same_thread=False)
-
-def init_db():
-    c = con()
-    c.execute('''CREATE TABLE IF NOT EXISTS productos (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        codigo TEXT UNIQUE,
-        nombre TEXT,
-        categoria TEXT,
-        marca TEXT,
-        precio_compra REAL,
-        precio_venta REAL,
-        stock INTEGER,
-        stock_minimo INTEGER,
-        proveedor TEXT,
-        estado TEXT,
-        fecha TEXT
-    )''')
-    c.execute('''CREATE TABLE IF NOT EXISTS chat_mensajes (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        fecha TEXT,
-        usuario TEXT,
-        destino TEXT,
-        canal TEXT,
-        mensaje TEXT,
-        adjunto TEXT
-    )''')
-    c.commit()
-    if pd.read_sql("SELECT COUNT(*) as n FROM productos", c)["n"].iloc[0] == 0:
-        demo = [
-            ("P001","Harina 000 x 25kg","Harinas","Molino Norte",9800,12800,180,40,"Molino Norte","Activo"),
-            ("P002","Aceite girasol 900ml","Almacén","Solcampo",1150,1690,84,25,"Aceitera Sur","Activo"),
-            ("P003","Yerba mate 1kg","Infusiones","La Estancia",3100,4550,42,20,"Mayorista Verde","Activo"),
-            ("P004","Azúcar 1kg","Almacén","Dulce Campo",780,1190,36,30,"Distribuidora Dulce","Activo"),
-            ("P005","Gaseosa cola 2.25L","Bebidas","Fresca",1450,2450,22,30,"Bebidas Centro","Activo"),
-            ("P006","Lavandina 1L","Limpieza","Brillo",520,890,65,20,"Limpieza Total","Activo"),
-        ]
-        for x in demo:
-            c.execute("""INSERT OR IGNORE INTO productos 
-            (codigo,nombre,categoria,marca,precio_compra,precio_venta,stock,stock_minimo,proveedor,estado,fecha)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?)""", (*x, datetime.now().strftime("%Y-%m-%d")))
-        c.commit()
-    if pd.read_sql("SELECT COUNT(*) as n FROM chat_mensajes", c)["n"].iloc[0] == 0:
-        mensajes_demo = [
-            (datetime.now().strftime("%Y-%m-%d %H:%M"), "Jefe", "Todos", "General", "Buen día equipo. Revisemos pedidos pendientes antes de las 11:00.", ""),
-            (datetime.now().strftime("%Y-%m-%d %H:%M"), "Depósito", "Todos", "General", "Stock de gaseosas bajo. Quedan pocas unidades para reparto.", ""),
-            (datetime.now().strftime("%Y-%m-%d %H:%M"), "Chofer Martín", "Todos", "Logística", "Salgo para CABA con pedidos PED-2041 y PED-2043.", ""),
-            (datetime.now().strftime("%Y-%m-%d %H:%M"), "Administración", "Jefe", "Privado", "Mayorista San Telmo quedó con saldo pendiente para seguimiento.", ""),
-        ]
-        c.executemany("INSERT INTO chat_mensajes (fecha,usuario,destino,canal,mensaje,adjunto) VALUES (?,?,?,?,?,?)", mensajes_demo)
-        c.commit()
-    c.close()
-
-init_db()
-
-def get_productos():
-    c = con(); df = pd.read_sql("SELECT * FROM productos ORDER BY id DESC", c); c.close(); return df
-
-def add_producto(data):
-    c = con()
-    c.execute("""INSERT OR REPLACE INTO productos
-    (codigo,nombre,categoria,marca,precio_compra,precio_venta,stock,stock_minimo,proveedor,estado,fecha)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?)""", data)
-    c.commit(); c.close()
-
-def get_chat(canal="General", destino="Todos"):
-    c = con()
-    if canal == "Privado":
-        df = pd.read_sql("""SELECT * FROM chat_mensajes
-                         WHERE canal='Privado' AND (destino=? OR usuario=? OR destino='Jefe')
-                         ORDER BY id DESC LIMIT 60""", c, params=(destino, destino))
-    else:
-        df = pd.read_sql("SELECT * FROM chat_mensajes WHERE canal=? ORDER BY id DESC LIMIT 60", c, params=(canal,))
-    c.close()
-    return df.sort_values("id") if not df.empty else df
-
-def add_chat(usuario, destino, canal, mensaje, adjunto=""):
-    c = con()
-    c.execute("INSERT INTO chat_mensajes (fecha,usuario,destino,canal,mensaje,adjunto) VALUES (?,?,?,?,?,?)",
-              (datetime.now().strftime("%Y-%m-%d %H:%M"), usuario, destino, canal, mensaje, adjunto))
-    c.commit(); c.close()
-
-# ============================================================
-# DATOS DEMO VIVOS
-# ============================================================
-random.seed(8)
-clientes = pd.DataFrame({
-    "Cliente": ["Autoservicio Los Pinos", "Despensa Don Mario", "Supermercado Avenida", "Kiosco Central", "Mayorista San Telmo", "Almacén La Esquina"],
-    "Zona": ["CABA", "GBA Oeste", "GBA Sur", "CABA", "GBA Norte", "GBA Oeste"],
-    "Estado": ["Activo", "Activo", "Activo", "Activo", "Activo", "Con deuda"],
-    "Deuda": [180000, 45000, 0, 82000, 315000, 126000],
-    "Última compra": ["Hoy", "Ayer", "Hoy", "Hace 2 días", "Hoy", "Hace 5 días"]
-})
-ventas = pd.DataFrame({
-    "Día": list(range(1, 31)),
-    "Ventas": [random.randint(180000, 650000) for _ in range(30)],
-    "Ganancia": [random.randint(52000, 210000) for _ in range(30)]
-})
-logistica = pd.DataFrame({
-    "Pedido": ["PED-2041", "PED-2042", "PED-2043", "PED-2044", "PED-2045"],
-    "Cliente": ["Autoservicio Los Pinos", "Mayorista San Telmo", "Kiosco Central", "Despensa Don Mario", "Supermercado Avenida"],
-    "Chofer": ["Martín", "Lucas", "Diego", "Sergio", "Nicolás"],
-    "Zona": ["CABA", "GBA Norte", "CABA", "GBA Oeste", "GBA Sur"],
-    "Estado": ["En reparto", "Preparación", "Entregado", "Pendiente", "En reparto"],
-    "Importe": [245000, 520000, 78000, 132000, 410000]
-})
-movimientos = pd.DataFrame({
-    "Hora": ["08:40", "09:15", "10:05", "11:30", "13:20", "15:10"],
-    "Movimiento": ["Venta contado", "Pago cliente", "Egreso combustible", "Venta transferencia", "Pago proveedor", "Venta cuenta corriente"],
-    "Tipo": ["Ingreso", "Ingreso", "Egreso", "Ingreso", "Egreso", "Ingreso"],
-    "Importe": [185000, 90000, -35000, 240000, -120000, 310000]
-})
-
-# ============================================================
-# SESIÓN
-# ============================================================
-if "logged" not in st.session_state: st.session_state.logged = False
-if "page" not in st.session_state: st.session_state.page = "Inicio"
-if "usuario_demo" not in st.session_state: st.session_state.usuario_demo = "Jefe"
-
-# ============================================================
-# COMPONENTES
-# ============================================================
-def logo():
-    st.markdown('<div class="logo-box">DC</div>', unsafe_allow_html=True)
-
-def kpi(label, value, note):
-    st.markdown(f"""
-    <div class="premium-card">
-        <div class="kpi-label">{label}</div>
-        <div class="kpi-value">{value}</div>
-        <div class="kpi-note">{note}</div>
-    </div>
-    """, unsafe_allow_html=True)
-
+def demo_banner():
+    st.markdown('<div class="demo-banner">⚠️ DEMO COMERCIAL — ACCESO LIMITADO · Solo visualización. Carga, edición, guardado, chat real y reportes completos están bloqueados.</div>', unsafe_allow_html=True)
+def locked_notice():
+    st.markdown('<div class="locked-box">🔒 Función bloqueada en esta demo. Para utilizar esta herramienta con datos reales, solicite acceso completo.</div>', unsafe_allow_html=True)
 def header(title, subtitle):
-    st.markdown(f"""
-    <div class="module-header">
-        <h2>{title}</h2>
-        <p>{subtitle}</p>
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown(f'<div class="module-header"><h2>{title}</h2><p>{subtitle}</p></div>', unsafe_allow_html=True)
+def kpi(label, value, note):
+    st.markdown(f'<div class="card"><div class="kpi-label">{label}</div><div class="kpi-value">{value}</div><div class="kpi-note">{note}</div></div>', unsafe_allow_html=True)
+def styled_fig(fig, height=390):
+    fig.update_layout(template="plotly_dark", height=height, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(color="#F8F1D7"), title_font=dict(color="#F5D56A", size=20), margin=dict(l=20,r=20,t=55,b=25))
+    return fig
+
+def login():
+    st.markdown("<br><br>", unsafe_allow_html=True)
+    c1,c2,c3=st.columns([1,1.15,1])
+    with c2:
+        st.markdown('<div class="card" style="text-align:center;"><div style="font-size:54px;">🏢</div><div style="font-size:34px;font-weight:900;color:#F5D56A;">DEL CAMPO</div><div style="font-size:18px;font-weight:800;color:#F8F1D7;">DISTRIBUIDORA</div><div style="color:#c8b46a;margin-top:10px;">Demo comercial de gestión empresarial</div></div>', unsafe_allow_html=True)
+        st.info("Acceso demo: usuario **demo** · contraseña **demo123**")
+        user=st.text_input("Usuario", value="demo")
+        pwd=st.text_input("Contraseña", type="password", value="demo123")
+        if st.button("Ingresar a la demo", use_container_width=True):
+            if user==DEMO_USER and pwd==DEMO_PASS:
+                st.session_state.logged=True; st.rerun()
+            else:
+                st.error("Acceso no autorizado para esta demo.")
+        st.link_button("📞 Solicitar acceso completo", WHATSAPP_LINK, use_container_width=True)
 
 def sidebar():
     with st.sidebar:
-        logo()
-        st.markdown("### DEL CAMPO")
+        st.markdown("## 🏢 DEL CAMPO")
         st.markdown("**DISTRIBUIDORA**")
-        st.markdown('<span class="badge">DEMO COMERCIAL</span>', unsafe_allow_html=True)
+        st.caption("Demo comercial bloqueada")
         st.markdown("---")
-        pages = {
-            "Inicio":"🏠", "Productos":"📦", "Ventas":"🧾", "Clientes":"👥", "Caja":"💰", "Logística":"🚚", "Chat interno":"💬", "Reportes":"📊", "Inteligencia":"🧠", "Configuración":"⚙️"
-        }
-        for p, icon in pages.items():
-            if st.button(f"{icon} {p}", use_container_width=True):
-                st.session_state.page = p; st.rerun()
+        pages=["Dashboard","Productos","Ventas","Clientes","Caja","Logística","Chat interno","Reportes","Inteligencia","Configuración"]
+        icons={"Dashboard":"📊","Productos":"📦","Ventas":"🧾","Clientes":"👥","Caja":"💰","Logística":"🚚","Chat interno":"💬","Reportes":"📑","Inteligencia":"🧠","Configuración":"⚙️"}
+        for p in pages:
+            if st.button(f"{icons[p]} {p}", use_container_width=True):
+                st.session_state.page=p; st.rerun()
         st.markdown("---")
-        st.caption("Usuario demo: Administración")
-        if st.button("Cerrar sesión", use_container_width=True):
-            st.session_state.logged = False; st.rerun()
+        st.success("Modo visualización")
+        st.caption("Sin guardado · Sin edición · Sin uso operativo")
+        if st.button("Cerrar demo", use_container_width=True):
+            st.session_state.logged=False; st.rerun()
 
-# ============================================================
-# LOGIN
-# ============================================================
-def login():
-    st.markdown('<div class="login-wrap"><div style="display:flex; justify-content:center;"><div class="logo-box">DC</div></div><div class="login-title">DEL CAMPO</div><div class="login-sub">Distribuidora · Sistema comercial premium</div><span class="badge">Acceso demo</span></div>', unsafe_allow_html=True)
-    c1, c2, c3 = st.columns([1,1.15,1])
-    with c2:
-        user = st.text_input("Usuario", value="admin")
-        pwd = st.text_input("Contraseña", value="admin123", type="password")
-        if st.button("Ingresar", use_container_width=True):
-            st.session_state.logged = True; st.rerun()
-        st.caption("Demo: admin / admin123")
-
-# ============================================================
-# PÁGINAS
-# ============================================================
-def page_inicio():
-    st.markdown(f"""
-    <div class="main-hero">
-        <div style="display:flex; gap:18px; align-items:center;">
-            <div class="logo-box">DC</div>
-            <div>
-                <h1 class="hero-title">DEL CAMPO DISTRIBUIDORA</h1>
-                <div class="hero-subtitle">Demo premium para gestión diaria: ventas, stock, caja, clientes y logística.</div>
-            </div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-    dfp = get_productos()
-    c1,c2,c3,c4,c5 = st.columns(5)
-    with c1: kpi("Ventas del día", "$ 1.245.000", "+18% vs ayer")
-    with c2: kpi("Caja actual", "$ 785.000", "Operación positiva")
-    with c3: kpi("Pedidos activos", "24", "8 en reparto")
-    with c4: kpi("Productos", str(len(dfp)), "Catálogo activo")
-    with c5: kpi("Stock crítico", str((dfp['stock'] <= dfp['stock_minimo']).sum()), "Revisión necesaria")
-
-    st.markdown('<div class="section-title">Panel comercial</div>', unsafe_allow_html=True)
-    a,b = st.columns([2,1])
-    with a:
-        fig = px.line(ventas, x="Día", y=["Ventas","Ganancia"], markers=True, title="Evolución mensual de ventas y ganancia")
-        fig.update_layout(template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', height=410, font_color="#f5f0df")
-        st.plotly_chart(fig, use_container_width=True)
-    with b:
-        mix = pd.DataFrame({"Tipo":["Contado","Transferencia","Cuenta corriente","Mercado Pago"], "Importe":[42,28,20,10]})
-        fig2 = px.pie(mix, names="Tipo", values="Importe", hole=.55, title="Métodos de pago")
-        fig2.update_layout(template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)', height=410, font_color="#f5f0df")
-        st.plotly_chart(fig2, use_container_width=True)
-
-    c,d = st.columns(2)
-    with c:
-        st.markdown('<div class="section-title">🚚 Repartos en movimiento</div>', unsafe_allow_html=True)
-        st.dataframe(logistica, use_container_width=True, hide_index=True)
-    with d:
-        st.markdown('<div class="section-title">💰 Movimientos de caja</div>', unsafe_allow_html=True)
-        st.dataframe(movimientos, use_container_width=True, hide_index=True)
-
-def page_productos():
-    header("Productos", "Carga producto por producto, control de stock y alertas comerciales.")
-    df = get_productos()
-    with st.expander("➕ Cargar nuevo producto", expanded=True):
-        c1,c2,c3 = st.columns(3)
-        with c1:
-            codigo = st.text_input("Código")
-            nombre = st.text_input("Nombre del producto")
-            categoria = st.selectbox("Categoría", ["Almacén","Bebidas","Harinas","Limpieza","Lácteos","Golosinas","Otros"])
-        with c2:
-            marca = st.text_input("Marca")
-            proveedor = st.text_input("Proveedor")
-            estado = st.selectbox("Estado", ["Activo","Inactivo"])
-        with c3:
-            pc = st.number_input("Precio compra", min_value=0.0, step=100.0)
-            pv = st.number_input("Precio venta", min_value=0.0, step=100.0)
-            stock = st.number_input("Stock", min_value=0, step=1)
-            minimo = st.number_input("Stock mínimo", min_value=0, step=1)
-        if st.button("Guardar producto", use_container_width=True):
-            if codigo and nombre:
-                add_producto((codigo,nombre,categoria,marca,pc,pv,stock,minimo,proveedor,estado,datetime.now().strftime("%Y-%m-%d")))
-                st.success("Producto guardado correctamente."); st.rerun()
-            else:
-                st.error("Completá código y nombre.")
-    st.markdown('<div class="section-title">Inventario demo</div>', unsafe_allow_html=True)
-    df["Alerta"] = df.apply(lambda r: "🔴 Bajo stock" if r["stock"] <= r["stock_minimo"] else "🟢 OK", axis=1)
-    st.dataframe(df[["codigo","nombre","categoria","marca","precio_venta","stock","stock_minimo","proveedor","Alerta"]], use_container_width=True, hide_index=True)
-
-def page_ventas():
-    header("Ventas", "Simulación comercial para que el cliente visualice el uso diario.")
-    dfp = get_productos()
-    c1,c2 = st.columns([1,1])
+def dashboard():
+    demo_banner(); header("Panel principal","Vista ejecutiva para analizar ventas, caja, stock, clientes y logística.")
+    c1,c2,c3,c4,c5=st.columns(5)
+    for col,args in zip([c1,c2,c3,c4,c5],[("Ventas del día","$ 685.000","+14% vs ayer"),("Ventas del mes","$ 12.850.000","+22% mensual"),("Caja del día","$ 1.240.000","Saldo positivo"),("Pedidos activos","42","18 en reparto"),("Stock crítico","5","Reposición sugerida")]):
+        with col: kpi(*args)
+    col1,col2=st.columns([2,1])
+    with col1:
+        st.plotly_chart(styled_fig(px.line(ventas_mes,x="Día",y=["Ventas","Ganancia"],markers=True,title="Evolución mensual de ventas y ganancias"),420), use_container_width=True)
+    with col2:
+        mix=pd.DataFrame({"Tipo":["Blanco","Negro","Cuenta corriente","Transferencia"],"Importe":[4200000,1800000,2600000,3100000]})
+        st.plotly_chart(styled_fig(px.pie(mix,names="Tipo",values="Importe",hole=.55,title="Distribución comercial"),420), use_container_width=True)
+    c1,c2=st.columns(2)
     with c1:
-        cliente = st.selectbox("Cliente", clientes["Cliente"])
-        prod = st.selectbox("Producto", dfp["nombre"] if not dfp.empty else [])
-        cant = st.number_input("Cantidad", min_value=1, value=1)
-        tipo = st.selectbox("Tipo de venta", ["Blanco", "Negro"])
-        pago = st.selectbox("Método de pago", ["Efectivo","Transferencia","Cuenta corriente","Mercado Pago","Cheque"])
-        st.button("Registrar venta demo", use_container_width=True)
+        st.subheader("🚨 Alertas operativas"); st.warning("5 productos por debajo del stock mínimo."); st.info("18 pedidos se encuentran en reparto."); st.error("3 clientes superaron el límite de crédito."); st.success("Caja diaria con saldo positivo.")
     with c2:
-        st.info("Esta pantalla permite mostrar cómo un empleado cargaría ventas todos los días.")
-        st.metric("Total estimado", "$ 128.500", "+ margen incluido")
-        st.metric("Stock posterior", "Disponible", "validación demo")
-    st.markdown('<div class="section-title">Últimas ventas demo</div>', unsafe_allow_html=True)
-    ult = pd.DataFrame({"Fecha":["Hoy","Hoy","Ayer","Ayer"],"Cliente":clientes["Cliente"].head(4),"Importe":[245000,78000,132000,410000],"Pago":["Transferencia","Efectivo","Cuenta corriente","Mercado Pago"]})
-    st.dataframe(ult, use_container_width=True, hide_index=True)
+        st.subheader("📋 Pedidos recientes"); st.dataframe(pedidos,use_container_width=True,hide_index=True)
 
-def page_clientes():
-    header("Clientes", "Base comercial, deuda, historial y oportunidades de venta.")
-    c1,c2,c3 = st.columns(3)
-    with c1: st.metric("Clientes activos", "148", "+12 este mes")
-    with c2: st.metric("Clientes con deuda", "31", "seguimiento")
-    with c3: st.metric("Deuda total", "$ 2.180.000", "+5%")
-    st.dataframe(clientes, use_container_width=True, hide_index=True)
-    fig = px.bar(clientes, x="Cliente", y="Deuda", color="Zona", title="Deuda por cliente")
-    fig.update_layout(template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', height=390, font_color="#f5f0df")
-    st.plotly_chart(fig, use_container_width=True)
+def productos_page():
+    demo_banner(); header("Productos","Catálogo comercial, precios, stock y alertas de reposición."); locked_notice()
+    f1,f2,f3=st.columns(3)
+    with f1: st.text_input("Buscar producto", disabled=True, placeholder="Bloqueado en demo")
+    with f2: st.selectbox("Categoría", ["Todas"]+sorted(productos["Categoría"].unique()), disabled=True)
+    with f3: st.selectbox("Estado", ["Todos","OK","Bajo","Crítico"], disabled=True)
+    st.dataframe(productos,use_container_width=True,hide_index=True)
+    st.subheader("➕ Carga de producto")
+    c1,c2,c3,c4=st.columns(4)
+    with c1: st.text_input("Nombre", disabled=True)
+    with c2: st.text_input("Categoría", disabled=True)
+    with c3: st.number_input("Stock inicial", min_value=0, disabled=True)
+    with c4: st.number_input("Precio", min_value=0, disabled=True)
+    st.button("Guardar producto", disabled=True, use_container_width=True)
 
-def page_caja():
-    header("Caja", "Ingresos, egresos y control diario para administración.")
-    c1,c2,c3,c4 = st.columns(4)
-    with c1: st.metric("Ingresos", "$ 1.245.000")
-    with c2: st.metric("Egresos", "$ 340.000")
-    with c3: st.metric("Saldo", "$ 905.000")
-    with c4: st.metric("Pendiente cobro", "$ 520.000")
-    st.dataframe(movimientos, use_container_width=True, hide_index=True)
-
-def page_logistica():
-    header("Logística", "Vista visual de reparto, choferes, zonas y estado de pedidos.")
-    st.dataframe(logistica, use_container_width=True, hide_index=True)
-    fig = px.bar(logistica, x="Zona", y="Importe", color="Estado", title="Repartos por zona")
-    fig.update_layout(template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', height=410, font_color="#f5f0df")
-    st.plotly_chart(fig, use_container_width=True)
-    st.success("Demo visual: seguimiento de pedidos, zonas, choferes y confirmación de entrega.")
-
-
-def page_chat():
-    header("Chat interno", "Comunicación entre jefe, empleados, depósito, caja, ventas y logística.")
-    usuarios = ["Jefe", "Administración", "Ventas", "Depósito", "Caja", "Chofer Martín", "Chofer Lucas", "Sucursal Norte", "Sucursal Sur"]
-    col_a, col_b, col_c = st.columns([1,1,1])
-    with col_a:
-        st.session_state.usuario_demo = st.selectbox("Ingresar como", usuarios, index=usuarios.index(st.session_state.usuario_demo) if st.session_state.usuario_demo in usuarios else 0)
-    with col_b:
-        canal = st.selectbox("Canal", ["General", "Logística", "Ventas", "Depósito", "Privado"])
-    with col_c:
-        destino = st.selectbox("Destinatario", ["Todos"] + [u for u in usuarios if u != st.session_state.usuario_demo])
-
-    st.markdown('<div class="section-title">💬 Conversaciones de trabajo</div>', unsafe_allow_html=True)
-    left, right = st.columns([2.2, .8])
-    with left:
-        st.markdown('<div class="chat-panel">', unsafe_allow_html=True)
-        dfchat = get_chat(canal, destino)
-        if dfchat.empty:
-            st.info("Todavía no hay mensajes en este canal.")
-        else:
-            for _, r in dfchat.tail(18).iterrows():
-                own = " chat-own" if r["usuario"] == st.session_state.usuario_demo else ""
-                adj = f'<div class="chat-meta">📎 Adjunto: {r["adjunto"]}</div>' if str(r.get("adjunto", "")).strip() else ""
-                st.markdown(f"""
-                <div class="chat-message{own}">
-                    <div class="chat-author">{r['usuario']} → {r['destino']}</div>
-                    <div class="chat-meta">{r['fecha']} · Canal {r['canal']}</div>
-                    <div class="chat-text">{r['mensaje']}</div>
-                    {adj}
-                </div>
-                """, unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-
-        with st.form("form_chat", clear_on_submit=True):
-            mensaje = st.text_area("Escribir mensaje", placeholder="Ej: Juan, prepará el pedido PED-2048 para GBA Oeste...")
-            archivo = st.file_uploader("Adjuntar archivo demo", type=["png", "jpg", "jpeg", "pdf", "xlsx", "csv"], label_visibility="collapsed")
-            enviar = st.form_submit_button("Enviar mensaje", use_container_width=True)
-            if enviar:
-                if mensaje.strip():
-                    nombre_archivo = archivo.name if archivo is not None else ""
-                    add_chat(st.session_state.usuario_demo, destino, canal, mensaje.strip(), nombre_archivo)
-                    st.success("Mensaje enviado correctamente.")
-                    st.rerun()
-                else:
-                    st.error("Escribí un mensaje antes de enviar.")
-
-    with right:
-        st.markdown('<div class="section-title">🟢 Equipo online</div>', unsafe_allow_html=True)
-        for u in usuarios:
-            st.markdown(f'<div class="chat-message"><span class="online-dot"></span><b>{u}</b><div class="chat-meta">Disponible ahora</div></div>', unsafe_allow_html=True)
-        st.markdown('<div class="section-title">🔔 Alertas internas</div>', unsafe_allow_html=True)
-        st.warning("2 pedidos necesitan confirmación de depósito.")
-        st.info("1 comprobante pendiente de administración.")
-        st.success("Reparto CABA en curso.")
-
-def page_reportes():
-    header("Reportes", "Informes exportables para toma de decisiones.")
-    option = st.selectbox("Reporte", ["Ventas mensuales", "Stock", "Clientes", "Caja", "Logística"])
-    st.download_button("Descargar reporte demo CSV", ventas.to_csv(index=False).encode("utf-8"), "reporte_del_campo.csv", "text/csv", use_container_width=True)
-    st.dataframe(ventas, use_container_width=True, hide_index=True)
-
-def page_inteligencia():
-    header("Inteligencia comercial", "Lectura ejecutiva para detectar oportunidades y riesgos.")
-    c1,c2 = st.columns(2)
+def ventas_page():
+    demo_banner(); header("Ventas","Carga de operaciones, control de cobros y seguimiento comercial."); locked_notice()
+    c1,c2=st.columns([1,1])
     with c1:
-        top = pd.DataFrame({"Producto":["Harina 000", "Aceite", "Yerba", "Gaseosa", "Azúcar"], "Ventas":[120,98,75,62,58]})
-        fig = px.bar(top, x="Ventas", y="Producto", orientation="h", title="Productos más vendidos")
-        fig.update_layout(template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', height=410, font_color="#f5f0df")
-        st.plotly_chart(fig, use_container_width=True)
+        st.subheader("🧾 Nueva venta")
+        for label, opts in [("Cliente",clientes["Cliente"]),("Producto",productos["Producto"]),("Tipo de venta",["Blanco","Negro"]),("Método de pago",["Efectivo","Transferencia","Cuenta corriente","Cheque","Mercado Pago"])]:
+            st.selectbox(label, opts, disabled=True)
+        st.number_input("Cantidad", min_value=1, value=1, disabled=True)
+        st.button("Registrar venta", disabled=True, use_container_width=True)
     with c2:
-        st.warning("Cliente Mayorista San Telmo superó el umbral de deuda.")
-        st.success("Harinas y bebidas muestran alta rotación esta semana.")
-        st.info("Sugerencia demo: aumentar stock mínimo en productos de consumo masivo.")
+        st.plotly_chart(styled_fig(px.bar(ventas_categoria,x="Categoría",y="Importe",text_auto=True,title="Ventas por categoría")), use_container_width=True)
+    st.subheader("📋 Operaciones recientes"); st.dataframe(pedidos,use_container_width=True,hide_index=True)
 
-def page_config():
-    header("Configuración", "Parámetros visuales y comerciales de la demo.")
-    st.text_input("Nombre comercial", APP_NAME)
-    st.selectbox("Tema", ["Negro y dorado premium"])
-    st.checkbox("Activar módulo logística", True)
-    st.checkbox("Activar ventas blanco/negro", True)
-    st.checkbox("Activar alertas visuales", True)
-    st.button("Guardar configuración demo", use_container_width=True)
+def clientes_page():
+    demo_banner(); header("Clientes","Cartera comercial, deuda, actividad y ranking de compradores."); locked_notice()
+    c1,c2,c3=st.columns(3)
+    with c1: st.metric("Clientes activos","184","+12")
+    with c2: st.metric("Clientes con deuda","37","-4")
+    with c3: st.metric("Deuda total","$ 2.850.000","+6%")
+    st.dataframe(clientes,use_container_width=True,hide_index=True)
+    ranking=pd.DataFrame({"Cliente":clientes["Cliente"],"Facturación":[930000,420000,180000,1400000,510000,980000,760000]})
+    st.plotly_chart(styled_fig(px.bar(ranking.sort_values("Facturación"),x="Facturación",y="Cliente",orientation="h",title="Ranking de clientes")),use_container_width=True)
 
-# ============================================================
-# MAIN
-# ============================================================
+def caja_page():
+    demo_banner(); header("Caja","Ingresos, egresos, gastos, pagos y saldo diario."); locked_notice()
+    for col,args in zip(st.columns(4),[("Ingresos","$ 1.240.000","+18%"),("Egresos","$ 420.000","-7%"),("Saldo final","$ 820.000","+12%"),("Transferencias","$ 510.000","+9%")]):
+        with col: st.metric(*args)
+    mov=pd.DataFrame({"Hora":["09:20","10:15","11:40","13:10","15:35","16:20"],"Tipo":["Ingreso","Ingreso","Egreso","Ingreso","Egreso","Ingreso"],"Detalle":["Venta efectivo","Transferencia cliente","Pago proveedor","Cobro cuenta corriente","Combustible","Venta mayorista"],"Importe":[220000,185000,-95000,310000,-45000,420000]})
+    st.dataframe(mov,use_container_width=True,hide_index=True)
+
+def logistica_page():
+    demo_banner(); header("Logística","Repartos, rutas, choferes, vehículos y estados de entrega."); locked_notice()
+    st.dataframe(rutas,use_container_width=True,hide_index=True)
+    st.plotly_chart(styled_fig(px.bar(rutas,x="Ruta",y="Pedidos",color="Estado",title="Pedidos por ruta")),use_container_width=True)
+    c1,c2,c3=st.columns(3)
+    with c1: st.info("🚚 Ruta CABA: 14 entregas activas")
+    with c2: st.warning("⏳ Ruta GBA Norte pendiente de salida")
+    with c3: st.success("✅ Ruta Oeste en reparto")
+
+def chat_page():
+    demo_banner(); header("Chat interno","Comunicación interna para administración, ventas, depósito y reparto."); locked_notice()
+    st.caption("Vista simulada: el envío de mensajes y adjuntos está bloqueado en esta demo.")
+    st.dataframe(chat_demo,use_container_width=True,hide_index=True)
+    st.selectbox("Canal",["General","Ventas","Logística","Depósito","Privado jefe"],disabled=True)
+    st.file_uploader("Adjuntar archivo",disabled=True)
+    st.text_area("Mensaje",disabled=True,placeholder="Bloqueado en demo")
+    st.button("Enviar mensaje",disabled=True,use_container_width=True)
+
+def reportes_page():
+    demo_banner(); header("Reportes","Informes comerciales, stock, deuda, caja y logística."); locked_notice()
+    st.selectbox("Tipo de reporte",["Ventas","Stock","Clientes","Caja","Logística"],disabled=True)
+    st.plotly_chart(styled_fig(px.area(ventas_mes,x="Día",y="Ventas",title="Reporte visual de ventas")),use_container_width=True)
+    st.download_button("Descargar reporte",data="Reporte bloqueado en demo",file_name="demo_bloqueada.txt",disabled=True)
+
+def inteligencia_page():
+    demo_banner(); header("Inteligencia de negocio","Indicadores estratégicos para tomar mejores decisiones.")
+    c1,c2=st.columns(2)
+    with c1:
+        margen=pd.DataFrame({"Categoría":["Harinas","Almacén","Bebidas","Lácteos","Pastas"],"Margen":[31,24,38,21,28]})
+        st.plotly_chart(styled_fig(px.bar(margen,x="Categoría",y="Margen",title="Margen promedio por categoría")),use_container_width=True)
+    with c2:
+        proy=pd.DataFrame({"Mes":["Ene","Feb","Mar","Abr","May","Jun"],"Proyección":[8.2,8.7,9.4,10.1,12.8,13.6]})
+        st.plotly_chart(styled_fig(px.line(proy,x="Mes",y="Proyección",markers=True,title="Proyección de ventas estimadas")),use_container_width=True)
+    st.success("Recomendación demo: reforzar stock en bebidas y harinas antes del cierre mensual.")
+
+def configuracion_page():
+    demo_banner(); header("Configuración","Parámetros generales de empresa, usuarios y permisos."); locked_notice()
+    st.text_input("Nombre de la empresa",value="DEL CAMPO DISTRIBUIDORA",disabled=True)
+    st.text_input("CUIT",value="Bloqueado en demo",disabled=True)
+    st.selectbox("Tema visual",["Negro + Dorado Premium"],disabled=True)
+    st.checkbox("Activar ventas",value=True,disabled=True)
+    st.checkbox("Activar stock",value=True,disabled=True)
+    st.checkbox("Activar chat interno",value=True,disabled=True)
+    st.button("Guardar configuración",disabled=True,use_container_width=True)
+
 if not st.session_state.logged:
     login()
 else:
     sidebar()
-    page = st.session_state.page
-    if page == "Inicio": page_inicio()
-    elif page == "Productos": page_productos()
-    elif page == "Ventas": page_ventas()
-    elif page == "Clientes": page_clientes()
-    elif page == "Caja": page_caja()
-    elif page == "Logística": page_logistica()
-    elif page == "Chat interno": page_chat()
-    elif page == "Reportes": page_reportes()
-    elif page == "Inteligencia": page_inteligencia()
-    elif page == "Configuración": page_config()
+    pages={"Dashboard":dashboard,"Productos":productos_page,"Ventas":ventas_page,"Clientes":clientes_page,"Caja":caja_page,"Logística":logistica_page,"Chat interno":chat_page,"Reportes":reportes_page,"Inteligencia":inteligencia_page,"Configuración":configuracion_page}
+    pages[st.session_state.page]()
