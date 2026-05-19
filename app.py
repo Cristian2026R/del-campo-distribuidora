@@ -324,20 +324,6 @@ td{{padding:5px 0;border-bottom:1px dotted #bbb;vertical-align:top;}}
 .total{{font-size:20px;font-weight:bold;text-align:right;margin-top:10px;}}
 .btn{{display:block;text-align:center;margin:20px auto;background:#111;color:white;padding:10px;border-radius:6px;text-decoration:none;width:160px;}}
 @media print{{.btn{{display:none}} body{{background:white;padding:0}} .ticket{{border:none;width:280px}}}}
-.login-shell{min-height:82vh;display:flex;align-items:center;justify-content:center;padding:24px 10px 50px;}
-.premium-login-card{width:min(720px,92vw);background:linear-gradient(180deg,rgba(12,12,12,.90),rgba(5,5,5,.98));border:1px solid rgba(245,213,106,.55);border-radius:42px;padding:34px 34px 34px;box-shadow:0 38px 110px rgba(0,0,0,.78),0 0 95px rgba(212,175,55,.17), inset 0 1px 0 rgba(255,255,255,.07);text-align:center;position:relative;overflow:hidden;}
-.premium-login-card:before{content:"";position:absolute;inset:-30%;background:radial-gradient(circle at 50% 18%,rgba(245,213,106,.22),transparent 34%),radial-gradient(circle at 8% 80%,rgba(83,150,56,.14),transparent 22%),radial-gradient(circle at 88% 82%,rgba(83,150,56,.14),transparent 22%);pointer-events:none;}
-.login-inner{position:relative;z-index:2;}
-.food-hero{width:100%;height:330px;object-fit:cover;object-position:center 44%;border-radius:30px;border:1px solid rgba(245,213,106,.24);box-shadow:0 28px 75px rgba(0,0,0,.55),0 0 65px rgba(245,213,106,.16);margin-bottom:20px;}
-.brand-word{font-family:Georgia,'Times New Roman',serif;font-size:64px;font-weight:900;line-height:.96;color:#EBC75A;letter-spacing:2px;text-shadow:0 9px 24px rgba(245,213,106,.24);}
-.brand-subline{font-size:22px;font-weight:800;letter-spacing:15px;color:#EBC75A;margin-top:22px;display:flex;align-items:center;justify-content:center;gap:18px;}
-.brand-subline:before,.brand-subline:after{content:"";height:1px;width:100px;background:linear-gradient(90deg,transparent,#EBC75A);opacity:.85;}
-.brand-subline:after{background:linear-gradient(90deg,#EBC75A,transparent);}
-.login-form-wrap{width:min(620px,92vw);margin:-28px auto 0;position:relative;z-index:5;}
-.login-form-wrap .stTextInput input{height:62px!important;border-radius:16px!important;background:rgba(12,12,12,.82)!important;border:1px solid rgba(245,213,106,.42)!important;color:#F8F1D7!important;font-size:18px!important;padding-left:18px!important;box-shadow:inset 0 1px 0 rgba(255,255,255,.04)!important;}
-.login-form-wrap .stButton>button{height:66px!important;border-radius:18px!important;background:linear-gradient(135deg,#B8891E 0%,#F7D96B 55%,#C7962A 100%)!important;color:#0A0A0A!important;border:0!important;font-size:18px!important;font-weight:900!important;letter-spacing:.5px!important;box-shadow:0 20px 52px rgba(212,175,55,.28)!important;text-transform:uppercase;}
-.login-form-wrap .stButton>button:hover{filter:brightness(1.06);transform:translateY(-2px);}
-.login-form-wrap a{height:60px!important;border-radius:16px!important;border:1px solid rgba(245,213,106,.38)!important;background:rgba(10,10,10,.58)!important;color:#EBC75A!important;font-weight:800!important;}
 </style></head>
 <body>
 <a href='javascript:window.print()' class='btn'>Imprimir ticket</a>
