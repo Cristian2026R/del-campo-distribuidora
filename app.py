@@ -59,12 +59,20 @@ section[data-testid="stSidebar"] *{color:#F8F1D7!important;}
 .stButton>button, .stDownloadButton>button{background:linear-gradient(135deg,#B98A1E,#F5D56A)!important;color:#111!important;border:0!important;border-radius:14px!important;font-weight:900!important;padding:12px 18px!important;box-shadow:0 12px 28px rgba(212,175,55,.18)!important;}
 .stDownloadButton>button:hover, .stButton>button:hover{filter:brightness(1.05);transform:translateY(-1px);}
 .stButton>button:disabled{background:#2b2b2b!important;color:#807244!important;border:1px solid rgba(245,213,106,.18)!important;}
-.login-card{background:radial-gradient(circle at 50% 12%,rgba(245,213,106,.18),transparent 34%),linear-gradient(180deg,rgba(20,20,20,.98),rgba(8,8,8,.98));border:1px solid rgba(245,213,106,.30);border-radius:30px;padding:34px 34px 28px 34px;text-align:center;box-shadow:0 22px 70px rgba(0,0,0,.62);}
-.mozzarella-wrap{height:142px;display:flex;align-items:center;justify-content:center;margin-bottom:10px;}
-.mozzarella{width:150px;height:104px;border-radius:56% 44% 52% 48% / 58% 48% 52% 42%;background:radial-gradient(circle at 38% 30%,#fffef7 0%,#fff6d9 32%,#ead9a8 68%,#cda955 100%);box-shadow:0 18px 45px rgba(245,213,106,.24), inset -14px -12px 22px rgba(91,67,19,.24), inset 18px 14px 22px rgba(255,255,255,.78);position:relative;}
-.mozzarella:before{content:"";position:absolute;width:42px;height:26px;border-radius:50%;background:linear-gradient(135deg,#2f9e44,#8ce99a);left:-18px;bottom:16px;transform:rotate(-28deg);box-shadow:34px -10px 0 -6px #37b24d;}
-.mozzarella:after{content:"• • •";position:absolute;top:18px;left:48px;color:#6b4f1d;font-size:20px;letter-spacing:6px;opacity:.55;}
-.stTextInput input,.stNumberInput input,.stSelectbox div[data-baseweb="select"],.stTextArea textarea{background:#111!important;border:1px solid rgba(245,213,106,.25)!important;color:#F8F1D7!important;}
+.login-shell{min-height:88vh;display:flex;align-items:center;justify-content:center;}
+.login-card{background:radial-gradient(circle at 50% 7%,rgba(245,213,106,.20),transparent 36%),linear-gradient(180deg,rgba(22,22,22,.99),rgba(4,4,4,.99));border:1px solid rgba(245,213,106,.38);border-radius:34px;padding:38px 42px 34px 42px;text-align:center;box-shadow:0 30px 90px rgba(0,0,0,.78), 0 0 80px rgba(212,175,55,.08);margin-bottom:18px;}
+.mozzarella-wrap{height:185px;display:flex;align-items:center;justify-content:center;margin-bottom:2px;filter:drop-shadow(0 20px 36px rgba(212,175,55,.28));}
+.mozzarella{width:210px;height:130px;border-radius:56% 44% 52% 48% / 58% 48% 52% 42%;background:radial-gradient(circle at 34% 27%,#fffef9 0%,#fff4cc 30%,#e7d09a 66%,#b98a1e 100%);box-shadow:0 24px 60px rgba(245,213,106,.24), inset -20px -15px 30px rgba(73,51,12,.28), inset 22px 18px 30px rgba(255,255,255,.86);position:relative;transform:rotate(-3deg);}
+.mozzarella:before{content:"";position:absolute;width:54px;height:32px;border-radius:50%;background:linear-gradient(135deg,#1f8f3a,#8ce99a);left:-22px;bottom:22px;transform:rotate(-28deg);box-shadow:48px -18px 0 -9px #37b24d, 30px 12px 20px rgba(0,0,0,.18);}
+.mozzarella:after{content:"• • •";position:absolute;top:25px;left:68px;color:#755719;font-size:22px;letter-spacing:9px;opacity:.48;}
+.brand-word{font-size:48px;font-weight:900;color:#F5D56A;letter-spacing:.8px;text-shadow:0 8px 28px rgba(245,213,106,.18);line-height:1;}
+.brand-subline{display:flex;align-items:center;gap:16px;justify-content:center;margin-top:18px;color:#F8F1D7;font-size:18px;font-weight:900;letter-spacing:10px;}
+.brand-subline:before,.brand-subline:after{content:"";height:1px;width:74px;background:linear-gradient(90deg,transparent,#F5D56A);opacity:.8;}
+.brand-subline:after{background:linear-gradient(90deg,#F5D56A,transparent);}
+.stTextInput input,.stNumberInput input,.stSelectbox div[data-baseweb="select"],.stTextArea textarea{background:#111!important;border:1px solid rgba(245,213,106,.35)!important;color:#F8F1D7!important;border-radius:14px!important;min-height:50px!important;}
+.stTextInput input:focus{box-shadow:0 0 0 1px rgba(245,213,106,.50),0 0 24px rgba(245,213,106,.10)!important;}
+div[data-testid="stLinkButton"] a{background:linear-gradient(135deg,#B98A1E,#F5D56A)!important;color:#111!important;border:0!important;border-radius:14px!important;font-weight:900!important;padding:12px 18px!important;box-shadow:0 12px 28px rgba(212,175,55,.18)!important;text-decoration:none!important;width:100%!important;text-align:center!important;}
+
 [data-testid="stMetric"]{background:linear-gradient(180deg,rgba(22,22,22,.95),rgba(10,10,10,.95));border:1px solid rgba(212,175,55,.22);border-radius:20px;padding:18px;}
 hr{border:0;border-top:1px solid rgba(245,213,106,.18);}
 </style>
@@ -249,19 +257,19 @@ def styled_fig(fig, height=390):
 # LOGIN / SIDEBAR
 # =========================
 def login():
-    st.markdown("<br><br>", unsafe_allow_html=True)
-    c1,c2,c3=st.columns([1,1.05,1])
+    st.markdown("<br>", unsafe_allow_html=True)
+    c1,c2,c3=st.columns([1.05,0.95,1.05])
     with c2:
         st.markdown('''
         <div class="login-card">
             <div class="mozzarella-wrap"><div class="mozzarella"></div></div>
-            <div style="font-size:42px;font-weight:900;color:#F5D56A;letter-spacing:.5px;">DON VALENTIN</div>
-            <div style="font-size:17px;font-weight:800;color:#F8F1D7;letter-spacing:8px;margin-top:8px;">DISTRIBUIDORA</div>
+            <div class="brand-word">DON VALENTIN</div>
+            <div class="brand-subline">DISTRIBUIDORA</div>
         </div>
         ''', unsafe_allow_html=True)
-        user=st.text_input("Usuario", value="demo")
-        pwd=st.text_input("Contraseña", type="password", value="demo123")
-        if st.button("Ingresar", use_container_width=True):
+        user=st.text_input("Usuario", value="demo", placeholder="Usuario", label_visibility="collapsed")
+        pwd=st.text_input("Contraseña", type="password", value="demo123", placeholder="Contraseña", label_visibility="collapsed")
+        if st.button("🔒 Ingresar", use_container_width=True):
             if user==DEMO_USER and pwd==DEMO_PASS:
                 st.session_state.logged=True
                 st.rerun()
