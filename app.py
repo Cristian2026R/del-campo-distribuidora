@@ -81,20 +81,105 @@ div[data-testid="stLinkButton"] a{background:linear-gradient(135deg,#B98A1E,#F5D
 
 [data-testid="stMetric"]{background:linear-gradient(180deg,rgba(22,22,22,.95),rgba(10,10,10,.95));border:1px solid rgba(212,175,55,.22);border-radius:20px;padding:18px;}
 hr{border:0;border-top:1px solid rgba(245,213,106,.18);}
-.login-shell{min-height:82vh;display:flex;align-items:center;justify-content:center;padding:24px 10px 50px;}
-.premium-login-card{width:min(720px,92vw);background:linear-gradient(180deg,rgba(12,12,12,.90),rgba(5,5,5,.98));border:1px solid rgba(245,213,106,.55);border-radius:42px;padding:34px 34px 34px;box-shadow:0 38px 110px rgba(0,0,0,.78),0 0 95px rgba(212,175,55,.17), inset 0 1px 0 rgba(255,255,255,.07);text-align:center;position:relative;overflow:hidden;}
-.premium-login-card:before{content:"";position:absolute;inset:-30%;background:radial-gradient(circle at 50% 18%,rgba(245,213,106,.22),transparent 34%),radial-gradient(circle at 8% 80%,rgba(83,150,56,.14),transparent 22%),radial-gradient(circle at 88% 82%,rgba(83,150,56,.14),transparent 22%);pointer-events:none;}
-.login-inner{position:relative;z-index:2;}
-.food-hero{width:100%;height:330px;object-fit:cover;object-position:center 44%;border-radius:30px;border:1px solid rgba(245,213,106,.24);box-shadow:0 28px 75px rgba(0,0,0,.55),0 0 65px rgba(245,213,106,.16);margin-bottom:20px;}
-.brand-word{font-family:Georgia,'Times New Roman',serif;font-size:64px;font-weight:900;line-height:.96;color:#EBC75A;letter-spacing:2px;text-shadow:0 9px 24px rgba(245,213,106,.24);}
-.brand-subline{font-size:22px;font-weight:800;letter-spacing:15px;color:#EBC75A;margin-top:22px;display:flex;align-items:center;justify-content:center;gap:18px;}
-.brand-subline:before,.brand-subline:after{content:"";height:1px;width:100px;background:linear-gradient(90deg,transparent,#EBC75A);opacity:.85;}
-.brand-subline:after{background:linear-gradient(90deg,#EBC75A,transparent);}
-.login-form-wrap{width:min(620px,92vw);margin:-28px auto 0;position:relative;z-index:5;}
-.login-form-wrap .stTextInput input{height:62px!important;border-radius:16px!important;background:rgba(12,12,12,.82)!important;border:1px solid rgba(245,213,106,.42)!important;color:#F8F1D7!important;font-size:18px!important;padding-left:18px!important;box-shadow:inset 0 1px 0 rgba(255,255,255,.04)!important;}
-.login-form-wrap .stButton>button{height:66px!important;border-radius:18px!important;background:linear-gradient(135deg,#B8891E 0%,#F7D96B 55%,#C7962A 100%)!important;color:#0A0A0A!important;border:0!important;font-size:18px!important;font-weight:900!important;letter-spacing:.5px!important;box-shadow:0 20px 52px rgba(212,175,55,.28)!important;text-transform:uppercase;}
-.login-form-wrap .stButton>button:hover{filter:brightness(1.06);transform:translateY(-2px);}
-.login-form-wrap a{height:60px!important;border-radius:16px!important;border:1px solid rgba(245,213,106,.38)!important;background:rgba(10,10,10,.58)!important;color:#EBC75A!important;font-weight:800!important;}
+</style>
+""", unsafe_allow_html=True)
+
+
+# =========================
+# AJUSTE LOGIN PREMIUM COMPACTO
+# =========================
+st.markdown(f"""
+<style>
+/* Login compacto: todo visible sin usar rueda */
+.stApp {{
+    background:
+        linear-gradient(180deg, rgba(0,0,0,.82), rgba(0,0,0,.90)),
+        radial-gradient(circle at 18% 82%, rgba(64,120,45,.28), transparent 20%),
+        radial-gradient(circle at 84% 78%, rgba(64,120,45,.24), transparent 18%),
+        radial-gradient(circle at 50% 15%, rgba(245,213,106,.17), transparent 30%),
+        url("data:image/png;base64,{MOZZARELLA_B64}");
+    background-size: cover;
+    background-position: center;
+    background-attachment: fixed;
+}}
+.block-container {{
+    padding-top: .45rem !important;
+    padding-bottom: .25rem !important;
+}}
+.login-shell {{
+    min-height: auto !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    padding: 0 !important;
+    margin: 0 auto !important;
+}}
+.premium-login-card {{
+    width: min(620px, 92vw) !important;
+    border-radius: 34px !important;
+    padding: 18px 24px 22px !important;
+    margin: 0 auto 10px !important;
+    background: linear-gradient(180deg, rgba(10,10,10,.78), rgba(4,4,4,.94)) !important;
+    backdrop-filter: blur(8px) !important;
+    border: 1px solid rgba(245,213,106,.58) !important;
+    box-shadow: 0 28px 95px rgba(0,0,0,.78), 0 0 95px rgba(212,175,55,.18) !important;
+}}
+.food-hero {{
+    width: 100% !important;
+    height: 205px !important;
+    object-fit: cover !important;
+    object-position: center 42% !important;
+    border-radius: 26px !important;
+    margin-bottom: 14px !important;
+}}
+.brand-word {{
+    font-size: clamp(42px, 5vw, 58px) !important;
+    line-height: .9 !important;
+}}
+.brand-subline {{
+    font-size: 18px !important;
+    letter-spacing: 12px !important;
+    margin-top: 14px !important;
+}}
+.brand-subline:before,.brand-subline:after {{
+    width: 74px !important;
+}}
+.login-form-wrap {{
+    width: min(620px, 92vw) !important;
+    margin: 0 auto !important;
+}}
+.login-form-wrap .stTextInput {{
+    margin-bottom: .35rem !important;
+}}
+.login-form-wrap .stTextInput input {{
+    height: 48px !important;
+    min-height: 48px !important;
+    border-radius: 14px !important;
+    font-size: 16px !important;
+}}
+.login-form-wrap .stButton>button {{
+    height: 54px !important;
+    border-radius: 16px !important;
+    font-size: 16px !important;
+    margin-top: .15rem !important;
+}}
+.login-form-wrap a {{
+    height: 50px !important;
+    min-height: 50px !important;
+    border-radius: 15px !important;
+}}
+/* Oculta espacios extra del login */
+div[data-testid="stVerticalBlock"]:has(.login-shell) {{
+    gap: .35rem !important;
+}}
+@media (max-height: 720px) {{
+    .food-hero {{ height: 170px !important; }}
+    .premium-login-card {{ padding: 14px 22px 16px !important; }}
+    .brand-word {{ font-size: 42px !important; }}
+    .brand-subline {{ font-size: 14px !important; margin-top: 10px !important; }}
+    .login-form-wrap .stTextInput input {{ height: 44px !important; min-height: 44px !important; }}
+    .login-form-wrap .stButton>button {{ height: 48px !important; }}
+}}
 </style>
 """, unsafe_allow_html=True)
 
@@ -303,7 +388,7 @@ def login():
         </div>
     </div>
     """, unsafe_allow_html=True)
-    c1,c2,c3 = st.columns([1,0.98,1])
+    c1,c2,c3 = st.columns([1,0.82,1])
     with c2:
         st.markdown('<div class="login-form-wrap">', unsafe_allow_html=True)
         user=st.text_input("Usuario", value="demo", placeholder="Usuario", label_visibility="collapsed")
