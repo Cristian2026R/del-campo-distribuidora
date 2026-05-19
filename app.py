@@ -81,6 +81,18 @@ div[data-testid="stLinkButton"] a{background:linear-gradient(135deg,#B98A1E,#F5D
 
 [data-testid="stMetric"]{background:linear-gradient(180deg,rgba(22,22,22,.95),rgba(10,10,10,.95));border:1px solid rgba(212,175,55,.22);border-radius:20px;padding:18px;}
 hr{border:0;border-top:1px solid rgba(245,213,106,.18);}
+
+/* Ajuste pedido por cliente: textos grises/secondary en dorado legible */
+p, span, label, .stMarkdown, .stCaption, [data-testid="stCaptionContainer"], [data-testid="stCaptionContainer"] p,
+[data-testid="stMarkdownContainer"] p, .stSelectbox label, .stTextInput label, .stNumberInput label, .stTextArea label,
+[data-testid="stWidgetLabel"], [data-testid="stWidgetLabel"] p, .css-1dp5vir, .css-10trblm {
+    color:#E7DCA8 !important;
+}
+small, .caption, .st-emotion-cache-1vbkxwb, .st-emotion-cache-16idsys p {
+    color:#F5D56A !important;
+}
+.stInfo, .stWarning, .stSuccess, .stAlert { color:#F8F1D7 !important; }
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -326,7 +338,7 @@ td{{padding:5px 0;border-bottom:1px dotted #bbb;vertical-align:top;}}
 @media print{{.btn{{display:none}} body{{background:white;padding:0}} .ticket{{border:none;width:280px}}}}
 </style></head>
 <body>
-<a href='javascript:window.print()' class='btn'>Imprimir ticket</a>
+<a href='javascript:window.print()' class='btn'>Imprimir en HP / Ctrl+P</a>
 <div class='ticket'>
 <h2>DON VALENTIN</h2>
 <h3>Ticket interno</h3>
@@ -420,7 +432,7 @@ def dashboard():
     c1,c2,c3,c4=st.columns(4)
     with c1: kpi("Productos cargados", f"{len(df)}", "Desde lista de precios Excel")
     with c2: kpi("Productos activos", f"{activos}", "Disponibles para vender")
-    with c3: kpi("Fraccionables", f"{fracc}", "Ventas por 100g, 200g, 300g...")
+    with c3: kpi("Fraccionables", f"{fracc}", "Ventas desde 100g hasta 50kg")
     with c4: kpi("Valor de lista", money(valor_lista), "Precios con signo $")
     col1,col2=st.columns([2,1])
     with col1:
@@ -472,7 +484,7 @@ def productos_page():
     st.button("Guardar producto", use_container_width=True)
 
 def venta_fraccionada():
-    banner(); header("Venta fraccionada", "Carga visual de compras por unidad o por gramos: 100g, 200g, 300g, 500g, 1kg, etc.")
+    banner(); header("Venta fraccionada", "Carga visual de compras por unidad o por fracción: desde 100 gramos hasta 50 kilos.")
     df = get_products()
     if df.empty:
         st.warning("No hay productos cargados.")
@@ -488,7 +500,13 @@ def venta_fraccionada():
         grams = 0
         units = 1
         if modo == "Por gramos":
-            grams = st.selectbox("Cantidad", [100, 200, 250, 300, 500, 750, 1000, 1500, 2000])
+            grams = st.selectbox(
+                "Cantidad / fracción",
+                [100, 200, 300, 400, 500, 600, 700, 800, 900,
+                 1000, 1500, 2000, 2500, 3000, 4000, 5000,
+                 10000, 15000, 20000, 25000, 30000, 40000, 50000],
+                format_func=lambda x: f"{x} g" if x < 1000 else f"{x/1000:g} kg"
+            )
         else:
             units = st.number_input("Unidades", min_value=1, value=1, step=1)
         metodo = st.selectbox("Método de pago", ["Efectivo", "Transferencia", "Mercado Pago", "Cuenta corriente"])
@@ -536,7 +554,7 @@ def venta_fraccionada():
         st.metric("Total aplicado", money(total_dia))
 
 def ticket_page():
-    banner(); header("Ticket / Cobro", "Vista previa de ticket simple interno, listo para descargar o imprimir desde el navegador.")
+    banner(); header("Ticket / Cobro", "Vista previa de ticket interno, listo para imprimir en HP Smart Tank 750 desde el navegador.")
     ticket = st.session_state.get("last_ticket")
     if ticket is None:
         st.info("Todavía no generaste un ticket. Entrá en Venta fraccionada, aplicá una compra y se generará acá.")
@@ -568,7 +586,8 @@ def ticket_page():
     """, unsafe_allow_html=True)
     html = make_ticket_html(ticket)
     st.download_button("⬇️ Descargar ticket HTML para imprimir", data=html.encode("utf-8"), file_name=f"ticket_{ticket.get('Número','demo')}.html", mime="text/html", use_container_width=True)
-    st.caption("Para imprimir: descargá el HTML, abrilo en el navegador y tocá Imprimir. También puede adaptarse a impresora/ticketeadora común.")
+    st.markdown('<div class="success-box">🖨️ Impresión real con HP Smart Tank 750: descargá el ticket, abrilo en Chrome/Edge y tocá <b>Imprimir</b> o <b>Ctrl + P</b>. Elegí la impresora HP Smart Tank 750 en Windows.</div>', unsafe_allow_html=True)
+    st.caption("Ticket interno no fiscal. Para factura ARCA se requiere módulo fiscal adicional.")
 
 def clientes_page():
     banner(); header("Clientes", "Alta de clientes, cartera comercial y ejemplo de compras fraccionadas por negocio.")
