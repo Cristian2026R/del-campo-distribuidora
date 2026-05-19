@@ -1,229 +1,355 @@
-
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import random
+from datetime import datetime
+import re
+from pathlib import Path
 
-st.set_page_config(page_title="DEL CAMPO DISTRIBUIDORA", page_icon="🏢", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="DON VALENTIN", page_icon="🏢", layout="wide", initial_sidebar_state="expanded")
 
-APP_NAME = "DEL CAMPO DISTRIBUIDORA"
+APP_NAME = "DON VALENTIN"
 DEMO_USER = "demo"
 DEMO_PASS = "demo123"
-WHATSAPP_LINK = "https://wa.me/TUNUMERO?text=Hola,%20quiero%20solicitar%20acceso%20completo%20a%20la%20demo%20de%20DEL%20CAMPO%20DISTRIBUIDORA"
+DEFAULT_EXCEL = Path(__file__).parent / "lista_don_valentin.xlsx"
+WHATSAPP_LINK = "https://wa.me/TUNUMERO?text=Hola,%20quiero%20solicitar%20acceso%20completo%20a%20DON%20VALENTIN"
 
-random.seed(7)
-productos = pd.DataFrame({
-    "Código": ["P-1001","P-1002","P-1003","P-1004","P-1005","P-1006","P-1007","P-1008"],
-    "Producto": ["Harina 000 x 25kg","Aceite girasol 900ml","Azúcar 1kg","Yerba mate 1kg","Arroz largo fino 1kg","Fideos 500g","Leche 1L","Gaseosa 2.25L"],
-    "Categoría": ["Harinas","Almacén","Almacén","Infusiones","Almacén","Pastas","Lácteos","Bebidas"],
-    "Proveedor": ["Molino del Sur","Aceitera Norte","Dulce Campo","Yerbas del Litoral","Granos SRL","Pastas Centro","Lácteos Norte","Bebidas Premium"],
-    "Stock": [380,155,90,52,430,220,71,39],
-    "Stock mínimo": [120,80,100,60,150,100,80,60],
-    "Precio venta": [18500,1950,1350,4600,1450,1050,1250,2850],
-    "Estado": ["OK","OK","Bajo","Bajo","OK","OK","Bajo","Crítico"]
-})
-clientes = pd.DataFrame({
-    "Cliente": ["Autoservicio Sol","Kiosco Central","Despensa Norte","Mayorista Río","Almacén Don Luis","Supermercado Avenida","Distribuidora Oeste"],
-    "Zona": ["CABA","GBA Sur","GBA Norte","CABA","GBA Oeste","GBA Norte","GBA Oeste"],
-    "Tipo": ["Comercio","Minorista","Comercio","Mayorista","Comercio","Mayorista","Revendedor"],
-    "Estado": ["Activo","Activo","Inactivo","Activo","Activo","Activo","Activo"],
-    "Deuda": [120000,45000,0,280000,90000,160000,75000],
-    "Última compra": ["2026-05-10","2026-05-09","2026-03-18","2026-05-08","2026-05-07","2026-05-11","2026-05-06"]
-})
-ventas_mes = pd.DataFrame({"Día": list(range(1,31)), "Ventas": [random.randint(180000,620000) for _ in range(30)], "Ganancia": [random.randint(45000,210000) for _ in range(30)]})
-ventas_categoria = pd.DataFrame({"Categoría": ["Almacén","Harinas","Bebidas","Lácteos","Pastas","Infusiones"], "Importe": [4200000,3600000,2100000,1450000,980000,760000]})
-pedidos = pd.DataFrame({
-    "Pedido": ["PED-2401","PED-2402","PED-2403","PED-2404","PED-2405","PED-2406"],
-    "Cliente": ["Autoservicio Sol","Kiosco Central","Mayorista Río","Almacén Don Luis","Supermercado Avenida","Distribuidora Oeste"],
-    "Estado": ["Pendiente","En preparación","En reparto","Entregado","Pendiente","En reparto"],
-    "Importe": [250000,98000,430000,125000,345000,287000],
-    "Zona": ["CABA","GBA Sur","CABA","GBA Oeste","GBA Norte","GBA Oeste"]
-})
-rutas = pd.DataFrame({"Ruta":["Ruta CABA","Ruta GBA Norte","Ruta GBA Sur","Ruta Oeste"],"Chofer":["Martín Gómez","Lucas Pérez","Diego Suárez","Sergio Díaz"],"Vehículo":["Furgón 01","Camión 02","Furgón 03","Camión 04"],"Pedidos":[14,9,11,8],"Estado":["En reparto","Pendiente","En preparación","En reparto"],"Entrega estimada":["17:30","18:10","16:45","19:00"]})
-chat_demo = pd.DataFrame({"Hora":["09:12","09:34","10:05","10:28","11:15"],"Canal":["General","Logística","Privado jefe","Ventas","Depósito"],"Usuario":["Admin","Martín","Laura","Sofía","Nicolás"],"Mensaje":["Revisar pedidos pendientes antes del mediodía.","Ruta CABA salió con 14 entregas.","Cliente Mayorista Río pidió actualización de saldo.","Nueva venta cargada para Autoservicio Sol.","Stock bajo en gaseosas y yerba."]})
+# =========================
+# ESTADO
+# =========================
+if "logged" not in st.session_state:
+    st.session_state.logged = False
+if "page" not in st.session_state:
+    st.session_state.page = "Dashboard"
+if "ventas_demo" not in st.session_state:
+    st.session_state.ventas_demo = []
+if "clientes_demo" not in st.session_state:
+    st.session_state.clientes_demo = [
+        "Pizzería La Esquina", "Rotisería Avenida", "Almacén Don Luis", "Casa de Comidas Norte", "Panadería Centro"
+    ]
 
-if "logged" not in st.session_state: st.session_state.logged = False
-if "page" not in st.session_state: st.session_state.page = "Dashboard"
-
+# =========================
+# ESTILO NEGRO + DORADO
+# =========================
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
 html, body, [class*="css"] {font-family:'Inter',sans-serif;}
-.stApp {background: radial-gradient(circle at top left, rgba(212,175,55,.16), transparent 32%), linear-gradient(135deg,#070707 0%,#111 55%,#050505 100%); color:#F8F1D7;}
-section[data-testid="stSidebar"]{background:linear-gradient(180deg,#050505,#111);border-right:1px solid rgba(212,175,55,.28);}
+.stApp {background: radial-gradient(circle at top left, rgba(212,175,55,.18), transparent 30%), linear-gradient(135deg,#050505 0%,#111 55%,#050505 100%); color:#F8F1D7;}
+section[data-testid="stSidebar"]{background:linear-gradient(180deg,#040404,#111);border-right:1px solid rgba(212,175,55,.30);}
 section[data-testid="stSidebar"] *{color:#F8F1D7!important;}
 [data-testid="stHeader"]{background:rgba(5,5,5,0);}
-.demo-banner{background:linear-gradient(90deg,rgba(212,175,55,.25),rgba(245,213,106,.10));border:1px solid rgba(245,213,106,.45);color:#FFE89A;padding:14px 18px;border-radius:18px;font-weight:800;margin-bottom:18px;box-shadow:0 12px 32px rgba(212,175,55,.10);}
-.card{background:linear-gradient(180deg,rgba(22,22,22,.95),rgba(10,10,10,.95));border:1px solid rgba(212,175,55,.22);border-radius:24px;padding:22px;box-shadow:0 18px 44px rgba(0,0,0,.45);transition:.25s ease;}
-.card:hover{transform:translateY(-3px);border-color:rgba(245,213,106,.45);}
-.kpi-label{color:#bba762;font-size:13px;font-weight:700;text-transform:uppercase;}
+.block-container{padding-top:1.4rem; max-width:1320px;}
+.hero{background:linear-gradient(135deg,rgba(20,20,20,.98),rgba(5,5,5,.98));border:1px solid rgba(245,213,106,.34);border-radius:30px;padding:30px 34px;margin-bottom:22px;box-shadow:0 20px 60px rgba(0,0,0,.55);}
+.hero h1{color:#F5D56A;font-size:42px;font-weight:900;margin:0;letter-spacing:-.6px;}
+.hero p{color:#d8c982;font-size:16px;font-weight:700;margin:8px 0 0 0;}
+.demo-banner{background:linear-gradient(90deg,rgba(212,175,55,.24),rgba(245,213,106,.09));border:1px solid rgba(245,213,106,.45);color:#FFE89A;padding:14px 18px;border-radius:18px;font-weight:800;margin-bottom:18px;box-shadow:0 12px 32px rgba(212,175,55,.10);}
+.card{background:linear-gradient(180deg,rgba(22,22,22,.96),rgba(10,10,10,.96));border:1px solid rgba(212,175,55,.22);border-radius:24px;padding:22px;box-shadow:0 18px 44px rgba(0,0,0,.44);transition:.22s ease;margin-bottom:16px;}
+.card:hover{transform:translateY(-2px);border-color:rgba(245,213,106,.44);}
+.kpi-label{color:#bba762;font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.4px;}
 .kpi-value{color:#F5D56A;font-size:30px;font-weight:900;margin-top:4px;}
 .kpi-note{color:#e7dca8;font-size:13px;margin-top:6px;}
-.module-header{background:linear-gradient(135deg,#171717,#080808);border:1px solid rgba(245,213,106,.28);border-radius:26px;padding:24px;margin-bottom:18px;box-shadow:0 20px 55px rgba(0,0,0,.42);}
-.module-header h2{color:#F5D56A;font-size:30px;font-weight:900;margin:0;}
-.module-header p{color:#c8b46a;margin:7px 0 0 0;}
-.locked-box{background:rgba(245,213,106,.08);border:1px dashed rgba(245,213,106,.45);color:#FFE89A;border-radius:18px;padding:16px;margin:12px 0;font-weight:700;}
+.locked-box{background:rgba(245,213,106,.08);border:1px dashed rgba(245,213,106,.45);color:#FFE89A;border-radius:18px;padding:14px 16px;margin:12px 0;font-weight:700;}
+.success-box{background:rgba(34,197,94,.10);border:1px solid rgba(34,197,94,.35);color:#bbf7d0;border-radius:18px;padding:14px 16px;margin:12px 0;font-weight:700;}
 .stButton>button{background:linear-gradient(135deg,#B98A1E,#F5D56A);color:#111!important;border:0;border-radius:14px;font-weight:900;padding:12px 18px;}
 .stButton>button:disabled{background:#2b2b2b!important;color:#807244!important;border:1px solid rgba(245,213,106,.18);}
 .stTextInput input,.stNumberInput input,.stSelectbox div[data-baseweb="select"],.stTextArea textarea{background:#111!important;border:1px solid rgba(245,213,106,.25)!important;color:#F8F1D7!important;}
 [data-testid="stMetric"]{background:linear-gradient(180deg,rgba(22,22,22,.95),rgba(10,10,10,.95));border:1px solid rgba(212,175,55,.22);border-radius:20px;padding:18px;}
+hr{border:0;border-top:1px solid rgba(245,213,106,.18);}
 </style>
 """, unsafe_allow_html=True)
 
-def demo_banner():
-    st.markdown('<div class="demo-banner">⚠️ DEMO COMERCIAL — ACCESO LIMITADO · Solo visualización. Carga, edición, guardado, chat real y reportes completos están bloqueados.</div>', unsafe_allow_html=True)
-def locked_notice():
-    st.markdown('<div class="locked-box">🔒 Función bloqueada en esta demo. Para utilizar esta herramienta con datos reales, solicite acceso completo.</div>', unsafe_allow_html=True)
+# =========================
+# FUNCIONES DE DATOS
+# =========================
+def money(x):
+    try:
+        return "$ {:,.0f}".format(float(x)).replace(",", ".")
+    except Exception:
+        return "$ 0"
+
+def to_num(x):
+    if pd.isna(x):
+        return None
+    if isinstance(x, (int, float)):
+        return float(x)
+    s = str(x).strip().replace("$", "").replace(".", "").replace(",", ".")
+    if not s or "NO STOCK" in s.upper() or "XXXX" in s.upper():
+        return None
+    try:
+        return float(s)
+    except Exception:
+        return None
+
+def guess_category_row(name, unit_price, kg_price):
+    if pd.isna(name):
+        return False
+    txt = str(name).strip()
+    if not txt:
+        return False
+    return unit_price is None and kg_price is None and len(txt) < 35
+
+def parse_price_excel(file_obj):
+    raw = pd.read_excel(file_obj, sheet_name=0, header=None)
+    productos = []
+    blocks = [(0, 6, 8), (9, 15, 17)]
+    for name_col, unit_col, kg_col in blocks:
+        categoria = "General"
+        for _, row in raw.iterrows():
+            name = row.get(name_col, None)
+            if pd.isna(name):
+                continue
+            nombre = str(name).strip()
+            if not nombre or "whatsapp" in nombre.lower() or "lista de precios" in nombre.lower():
+                continue
+            precio_und = to_num(row.get(unit_col, None))
+            precio_kg = to_num(row.get(kg_col, None))
+            if guess_category_row(nombre, precio_und, precio_kg):
+                categoria = nombre.title()
+                continue
+            estado = "Sin stock" if any("NO STOCK" in str(v).upper() for v in row.values if not pd.isna(v)) else "Activo"
+            if precio_und is None and precio_kg is None and estado != "Sin stock":
+                continue
+            productos.append({
+                "Código": f"DV-{len(productos)+1:04d}",
+                "Producto": nombre.title(),
+                "Categoría": categoria,
+                "Precio unidad": precio_und if precio_und is not None else 0,
+                "Precio kg": precio_kg if precio_kg is not None else 0,
+                "Permite fraccionar": "Sí" if precio_kg is not None or any(w in nombre.lower() for w in ["kg", "gr", "grs", "panceta", "jamon", "paleta", "queso"]) else "No",
+                "Stock demo": 0 if estado == "Sin stock" else 25 + (len(productos) * 7) % 95,
+                "Estado": estado
+            })
+    df = pd.DataFrame(productos).drop_duplicates(subset=["Producto", "Categoría"], keep="first")
+    return df.reset_index(drop=True)
+
+@st.cache_data(show_spinner=False)
+def load_default_products():
+    if DEFAULT_EXCEL.exists():
+        return parse_price_excel(DEFAULT_EXCEL)
+    return pd.DataFrame({
+        "Código": ["DV-0001"], "Producto": ["Mozzarella X 10kg"], "Categoría": ["Mozzarellas"],
+        "Precio unidad": [65000], "Precio kg": [0], "Permite fraccionar": ["No"], "Stock demo": [30], "Estado": ["Activo"]
+    })
+
+def get_products():
+    uploaded = st.session_state.get("uploaded_prices", None)
+    if uploaded is not None:
+        return parse_price_excel(uploaded)
+    return load_default_products()
+
+def price_for_sale(row, grams, units):
+    precio_kg = float(row.get("Precio kg", 0) or 0)
+    precio_und = float(row.get("Precio unidad", 0) or 0)
+    if grams and grams > 0:
+        if precio_kg > 0:
+            return precio_kg * grams / 1000
+        # Si no tiene precio por kg, se toma precio de unidad como referencia de 1kg solo para demo visual.
+        return precio_und * grams / 1000
+    return precio_und * units
+
+def banner():
+    st.markdown('<div class="demo-banner">✨ DON VALENTIN · DEMO COMERCIAL PREMIUM · Negro con retoques dorados · Lista de precios, productos fraccionables y ventas por gramos.</div>', unsafe_allow_html=True)
+
 def header(title, subtitle):
-    st.markdown(f'<div class="module-header"><h2>{title}</h2><p>{subtitle}</p></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="hero"><h1>{title}</h1><p>{subtitle}</p></div>', unsafe_allow_html=True)
+
 def kpi(label, value, note):
     st.markdown(f'<div class="card"><div class="kpi-label">{label}</div><div class="kpi-value">{value}</div><div class="kpi-note">{note}</div></div>', unsafe_allow_html=True)
+
 def styled_fig(fig, height=390):
     fig.update_layout(template="plotly_dark", height=height, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(color="#F8F1D7"), title_font=dict(color="#F5D56A", size=20), margin=dict(l=20,r=20,t=55,b=25))
     return fig
 
+# =========================
+# LOGIN / SIDEBAR
+# =========================
 def login():
     st.markdown("<br><br>", unsafe_allow_html=True)
     c1,c2,c3=st.columns([1,1.15,1])
     with c2:
-        st.markdown('<div class="card" style="text-align:center;"><div style="font-size:54px;">🏢</div><div style="font-size:34px;font-weight:900;color:#F5D56A;">DEL CAMPO</div><div style="font-size:18px;font-weight:800;color:#F8F1D7;">DISTRIBUIDORA</div><div style="color:#c8b46a;margin-top:10px;">Demo comercial de gestión empresarial</div></div>', unsafe_allow_html=True)
+        st.markdown('<div class="card" style="text-align:center;"><div style="font-size:54px;">🥖</div><div style="font-size:38px;font-weight:900;color:#F5D56A;">DON VALENTIN</div><div style="font-size:17px;font-weight:800;color:#F8F1D7;">Sistema comercial para distribuidora gastronómica</div><div style="color:#c8b46a;margin-top:10px;">Demo premium · Productos · Precios · Fraccionamiento · Ventas</div></div>', unsafe_allow_html=True)
         st.info("Acceso demo: usuario **demo** · contraseña **demo123**")
         user=st.text_input("Usuario", value="demo")
         pwd=st.text_input("Contraseña", type="password", value="demo123")
         if st.button("Ingresar a la demo", use_container_width=True):
             if user==DEMO_USER and pwd==DEMO_PASS:
-                st.session_state.logged=True; st.rerun()
+                st.session_state.logged=True
+                st.rerun()
             else:
-                st.error("Acceso no autorizado para esta demo.")
-        st.link_button("📞 Solicitar acceso completo", WHATSAPP_LINK, use_container_width=True)
+                st.error("Acceso no autorizado.")
+        st.link_button("📞 Solicitar implementación completa", WHATSAPP_LINK, use_container_width=True)
 
 def sidebar():
     with st.sidebar:
-        st.markdown("## 🏢 DEL CAMPO")
-        st.markdown("**DISTRIBUIDORA**")
-        st.caption("Demo comercial bloqueada")
+        st.markdown("## 🥖 DON VALENTIN")
+        st.markdown("**Distribuidora gastronómica**")
+        st.caption("Demo premium de venta")
         st.markdown("---")
-        pages=["Dashboard","Productos","Ventas","Clientes","Caja","Logística","Chat interno","Reportes","Inteligencia","Configuración"]
-        icons={"Dashboard":"📊","Productos":"📦","Ventas":"🧾","Clientes":"👥","Caja":"💰","Logística":"🚚","Chat interno":"💬","Reportes":"📑","Inteligencia":"🧠","Configuración":"⚙️"}
+        pages=["Dashboard","Lista de precios","Productos","Venta fraccionada","Clientes","Logística","Reportes","Configuración"]
+        icons={"Dashboard":"📊","Lista de precios":"📄","Productos":"📦","Venta fraccionada":"⚖️","Clientes":"👥","Logística":"🚚","Reportes":"📑","Configuración":"⚙️"}
         for p in pages:
             if st.button(f"{icons[p]} {p}", use_container_width=True):
-                st.session_state.page=p; st.rerun()
+                st.session_state.page=p
+                st.rerun()
         st.markdown("---")
-        st.success("Modo visualización")
-        st.caption("Sin guardado · Sin edición · Sin uso operativo")
+        st.success("Demo visual activa")
+        st.caption("Lista cargable · Fraccionamiento por gramos")
         if st.button("Cerrar demo", use_container_width=True):
-            st.session_state.logged=False; st.rerun()
+            st.session_state.logged=False
+            st.rerun()
 
+# =========================
+# PÁGINAS
+# =========================
 def dashboard():
-    demo_banner(); header("Panel principal","Vista ejecutiva para analizar ventas, caja, stock, clientes y logística.")
-    c1,c2,c3,c4,c5=st.columns(5)
-    for col,args in zip([c1,c2,c3,c4,c5],[("Ventas del día","$ 685.000","+14% vs ayer"),("Ventas del mes","$ 12.850.000","+22% mensual"),("Caja del día","$ 1.240.000","Saldo positivo"),("Pedidos activos","42","18 en reparto"),("Stock crítico","5","Reposición sugerida")]):
-        with col: kpi(*args)
+    banner()
+    df = get_products()
+    header("DON VALENTIN", "Boceto comercial para que el cliente visualice el sistema por fuera y por dentro: precios, productos, ventas por gramos y operación diaria.")
+    activos = int((df["Estado"] == "Activo").sum()) if not df.empty else 0
+    fracc = int((df["Permite fraccionar"] == "Sí").sum()) if not df.empty else 0
+    valor_lista = df[["Precio unidad", "Precio kg"]].max(axis=1).sum() if not df.empty else 0
+    c1,c2,c3,c4=st.columns(4)
+    with c1: kpi("Productos cargados", f"{len(df)}", "Desde lista de precios Excel")
+    with c2: kpi("Productos activos", f"{activos}", "Disponibles para vender")
+    with c3: kpi("Fraccionables", f"{fracc}", "Ventas por 100g, 200g, 300g...")
+    with c4: kpi("Valor de lista", money(valor_lista), "Referencia comercial")
     col1,col2=st.columns([2,1])
     with col1:
-        st.plotly_chart(styled_fig(px.line(ventas_mes,x="Día",y=["Ventas","Ganancia"],markers=True,title="Evolución mensual de ventas y ganancias"),420), use_container_width=True)
+        cat = df.groupby("Categoría", as_index=False).size().rename(columns={"size":"Productos"}).sort_values("Productos", ascending=False).head(12)
+        st.plotly_chart(styled_fig(px.bar(cat, x="Categoría", y="Productos", text_auto=True, title="Productos por categoría"), 420), use_container_width=True)
     with col2:
-        mix=pd.DataFrame({"Tipo":["Blanco","Negro","Cuenta corriente","Transferencia"],"Importe":[4200000,1800000,2600000,3100000]})
-        st.plotly_chart(styled_fig(px.pie(mix,names="Tipo",values="Importe",hole=.55,title="Distribución comercial"),420), use_container_width=True)
-    c1,c2=st.columns(2)
-    with c1:
-        st.subheader("🚨 Alertas operativas"); st.warning("5 productos por debajo del stock mínimo."); st.info("18 pedidos se encuentran en reparto."); st.error("3 clientes superaron el límite de crédito."); st.success("Caja diaria con saldo positivo.")
-    with c2:
-        st.subheader("📋 Pedidos recientes"); st.dataframe(pedidos,use_container_width=True,hide_index=True)
+        status = df.groupby("Estado", as_index=False).size().rename(columns={"size":"Cantidad"})
+        st.plotly_chart(styled_fig(px.pie(status, names="Estado", values="Cantidad", hole=.55, title="Estado de lista"), 420), use_container_width=True)
+    st.markdown('<div class="success-box">💡 Boceto de venta: el cliente puede subir su lista de precios, ver productos ordenados por categoría y cargar compras fraccionadas por gramos para atención diaria.</div>', unsafe_allow_html=True)
+
+def lista_precios():
+    banner(); header("Lista de precios", "Subida de Excel de productos y precios para actualizar el catálogo comercial.")
+    st.markdown('<div class="card"><b>📄 Opción para el cliente:</b> subir su Excel de precios y productos. La app interpreta columnas de productos, precio por unidad y precio por kilo cuando existen.</div>', unsafe_allow_html=True)
+    uploaded = st.file_uploader("Subir Excel de precios Don Valentin", type=["xlsx", "xls"])
+    if uploaded is not None:
+        st.session_state.uploaded_prices = uploaded
+        st.success("Excel cargado correctamente. El catálogo se actualizó para esta sesión.")
+    df = get_products()
+    c1,c2,c3=st.columns(3)
+    with c1: st.metric("Total productos", len(df))
+    with c2: st.metric("Categorías", df["Categoría"].nunique() if not df.empty else 0)
+    with c3: st.metric("Fraccionables", int((df["Permite fraccionar"] == "Sí").sum()) if not df.empty else 0)
+    st.dataframe(df, use_container_width=True, hide_index=True, height=430)
 
 def productos_page():
-    demo_banner(); header("Productos","Catálogo comercial, precios, stock y alertas de reposición."); locked_notice()
-    f1,f2,f3=st.columns(3)
-    with f1: st.text_input("Buscar producto", disabled=True, placeholder="Bloqueado en demo")
-    with f2: st.selectbox("Categoría", ["Todas"]+sorted(productos["Categoría"].unique()), disabled=True)
-    with f3: st.selectbox("Estado", ["Todos","OK","Bajo","Crítico"], disabled=True)
-    st.dataframe(productos,use_container_width=True,hide_index=True)
-    st.subheader("➕ Carga de producto")
-    c1,c2,c3,c4=st.columns(4)
-    with c1: st.text_input("Nombre", disabled=True)
-    with c2: st.text_input("Categoría", disabled=True)
-    with c3: st.number_input("Stock inicial", min_value=0, disabled=True)
-    with c4: st.number_input("Precio", min_value=0, disabled=True)
-    st.button("Guardar producto", disabled=True, use_container_width=True)
+    banner(); header("Productos", "Catálogo profesional con categorías, precios, stock demo y estado comercial.")
+    df = get_products()
+    c1,c2,c3=st.columns(3)
+    with c1: busqueda=st.text_input("Buscar producto")
+    with c2: categoria=st.selectbox("Categoría", ["Todas"] + sorted(df["Categoría"].dropna().unique().tolist()))
+    with c3: fraccion=st.selectbox("Fraccionamiento", ["Todos", "Sí", "No"])
+    view=df.copy()
+    if busqueda:
+        view=view[view["Producto"].str.contains(busqueda, case=False, na=False)]
+    if categoria!="Todas":
+        view=view[view["Categoría"]==categoria]
+    if fraccion!="Todos":
+        view=view[view["Permite fraccionar"]==fraccion]
+    st.dataframe(view, use_container_width=True, hide_index=True, height=430)
+    st.subheader("➕ Carga manual de producto")
+    st.markdown('<div class="card">En la versión real, este formulario guardaría productos nuevos en base de datos. En la demo queda como boceto visual para presentar al cliente.</div>', unsafe_allow_html=True)
+    a,b,c,d=st.columns(4)
+    with a: st.text_input("Producto nuevo", placeholder="Ej: Queso cremoso x kg")
+    with b: st.selectbox("Categoría nueva", sorted(df["Categoría"].dropna().unique().tolist()) + ["Nueva categoría"])
+    with c: st.number_input("Precio unidad", min_value=0, step=100)
+    with d: st.number_input("Precio kg", min_value=0, step=100)
+    st.button("Guardar producto demo", use_container_width=True)
 
-def ventas_page():
-    demo_banner(); header("Ventas","Carga de operaciones, control de cobros y seguimiento comercial."); locked_notice()
-    c1,c2=st.columns([1,1])
-    with c1:
-        st.subheader("🧾 Nueva venta")
-        for label, opts in [("Cliente",clientes["Cliente"]),("Producto",productos["Producto"]),("Tipo de venta",["Blanco","Negro"]),("Método de pago",["Efectivo","Transferencia","Cuenta corriente","Cheque","Mercado Pago"])]:
-            st.selectbox(label, opts, disabled=True)
-        st.number_input("Cantidad", min_value=1, value=1, disabled=True)
-        st.button("Registrar venta", disabled=True, use_container_width=True)
-    with c2:
-        st.plotly_chart(styled_fig(px.bar(ventas_categoria,x="Categoría",y="Importe",text_auto=True,title="Ventas por categoría")), use_container_width=True)
-    st.subheader("📋 Operaciones recientes"); st.dataframe(pedidos,use_container_width=True,hide_index=True)
+def venta_fraccionada():
+    banner(); header("Venta fraccionada", "Carga visual de compras por unidad o por gramos: 100g, 200g, 300g, 500g, 1kg, etc.")
+    df = get_products()
+    if df.empty:
+        st.warning("No hay productos cargados.")
+        return
+    col1,col2=st.columns([1,1])
+    with col1:
+        st.subheader("⚖️ Nueva venta / simulador")
+        cliente = st.selectbox("Cliente", st.session_state.clientes_demo)
+        productos_lista = df["Producto"].tolist()
+        prod = st.selectbox("Producto", productos_lista)
+        row = df[df["Producto"] == prod].iloc[0]
+        modo = st.radio("Modo de venta", ["Por gramos", "Por unidad"], horizontal=True)
+        grams = 0
+        units = 1
+        if modo == "Por gramos":
+            grams = st.selectbox("Cantidad", [100, 200, 250, 300, 500, 750, 1000, 1500, 2000])
+        else:
+            units = st.number_input("Unidades", min_value=1, value=1, step=1)
+        total = price_for_sale(row, grams, units)
+        st.markdown(f'<div class="card"><div class="kpi-label">Total estimado</div><div class="kpi-value">{money(total)}</div><div class="kpi-note">Producto: {prod}</div></div>', unsafe_allow_html=True)
+        if st.button("Aplicar compra demo", use_container_width=True):
+            st.session_state.ventas_demo.append({
+                "Fecha": datetime.now().strftime("%d/%m/%Y %H:%M"),
+                "Cliente": cliente,
+                "Producto": prod,
+                "Modo": modo,
+                "Cantidad": f"{grams} g" if modo == "Por gramos" else f"{units} u.",
+                "Total": round(total, 2)
+            })
+            st.success("Compra aplicada en historial demo.")
+    with col2:
+        st.subheader("📋 Últimas compras aplicadas")
+        if st.session_state.ventas_demo:
+            ventas = pd.DataFrame(st.session_state.ventas_demo)
+        else:
+            ventas = pd.DataFrame([
+                {"Fecha":"Hoy 09:20","Cliente":"Pizzería La Esquina","Producto":"Mozzarella Doña Emilse X10Kg","Modo":"Por gramos","Cantidad":"500 g","Total":3250},
+                {"Fecha":"Hoy 10:05","Cliente":"Rotisería Avenida","Producto":"Panceta Luvianka Ahumada","Modo":"Por gramos","Cantidad":"300 g","Total":3300},
+                {"Fecha":"Hoy 11:12","Cliente":"Almacén Don Luis","Producto":"Aceituna Verde 1 X5Kg Garrafa","Modo":"Por unidad","Cantidad":"1 u.","Total":24000},
+            ])
+        st.dataframe(ventas, use_container_width=True, hide_index=True)
+        total_dia = ventas["Total"].sum() if "Total" in ventas else 0
+        st.metric("Total aplicado demo", money(total_dia))
 
 def clientes_page():
-    demo_banner(); header("Clientes","Cartera comercial, deuda, actividad y ranking de compradores."); locked_notice()
-    c1,c2,c3=st.columns(3)
-    with c1: st.metric("Clientes activos","184","+12")
-    with c2: st.metric("Clientes con deuda","37","-4")
-    with c3: st.metric("Deuda total","$ 2.850.000","+6%")
-    st.dataframe(clientes,use_container_width=True,hide_index=True)
-    ranking=pd.DataFrame({"Cliente":clientes["Cliente"],"Facturación":[930000,420000,180000,1400000,510000,980000,760000]})
-    st.plotly_chart(styled_fig(px.bar(ranking.sort_values("Facturación"),x="Facturación",y="Cliente",orientation="h",title="Ranking de clientes")),use_container_width=True)
-
-def caja_page():
-    demo_banner(); header("Caja","Ingresos, egresos, gastos, pagos y saldo diario."); locked_notice()
-    for col,args in zip(st.columns(4),[("Ingresos","$ 1.240.000","+18%"),("Egresos","$ 420.000","-7%"),("Saldo final","$ 820.000","+12%"),("Transferencias","$ 510.000","+9%")]):
-        with col: st.metric(*args)
-    mov=pd.DataFrame({"Hora":["09:20","10:15","11:40","13:10","15:35","16:20"],"Tipo":["Ingreso","Ingreso","Egreso","Ingreso","Egreso","Ingreso"],"Detalle":["Venta efectivo","Transferencia cliente","Pago proveedor","Cobro cuenta corriente","Combustible","Venta mayorista"],"Importe":[220000,185000,-95000,310000,-45000,420000]})
-    st.dataframe(mov,use_container_width=True,hide_index=True)
+    banner(); header("Clientes", "Clientes comerciales y ejemplo de compras fraccionadas por negocio.")
+    clientes = pd.DataFrame({
+        "Cliente": st.session_state.clientes_demo,
+        "Tipo": ["Pizzería", "Rotisería", "Almacén", "Comidas", "Panadería"],
+        "Zona": ["Centro", "Norte", "Oeste", "Sur", "Centro"],
+        "Estado": ["Activo", "Activo", "Activo", "Activo", "Activo"]
+    })
+    st.dataframe(clientes, use_container_width=True, hide_index=True)
 
 def logistica_page():
-    demo_banner(); header("Logística","Repartos, rutas, choferes, vehículos y estados de entrega."); locked_notice()
-    st.dataframe(rutas,use_container_width=True,hide_index=True)
-    st.plotly_chart(styled_fig(px.bar(rutas,x="Ruta",y="Pedidos",color="Estado",title="Pedidos por ruta")),use_container_width=True)
-    c1,c2,c3=st.columns(3)
-    with c1: st.info("🚚 Ruta CABA: 14 entregas activas")
-    with c2: st.warning("⏳ Ruta GBA Norte pendiente de salida")
-    with c3: st.success("✅ Ruta Oeste en reparto")
-
-def chat_page():
-    demo_banner(); header("Chat interno","Comunicación interna para administración, ventas, depósito y reparto."); locked_notice()
-    st.caption("Vista simulada: el envío de mensajes y adjuntos está bloqueado en esta demo.")
-    st.dataframe(chat_demo,use_container_width=True,hide_index=True)
-    st.selectbox("Canal",["General","Ventas","Logística","Depósito","Privado jefe"],disabled=True)
-    st.file_uploader("Adjuntar archivo",disabled=True)
-    st.text_area("Mensaje",disabled=True,placeholder="Bloqueado en demo")
-    st.button("Enviar mensaje",disabled=True,use_container_width=True)
+    banner(); header("Logística", "Vista comercial de preparación, despacho y entrega de pedidos.")
+    rutas = pd.DataFrame({"Ruta":["Centro","Zona Norte","Zona Oeste","Zona Sur"],"Chofer":["Martín","Lucas","Diego","Sergio"],"Pedidos":[12,8,10,7],"Estado":["En reparto","Preparando","En reparto","Pendiente"]})
+    st.dataframe(rutas, use_container_width=True, hide_index=True)
+    st.plotly_chart(styled_fig(px.bar(rutas, x="Ruta", y="Pedidos", color="Estado", title="Pedidos por ruta")), use_container_width=True)
 
 def reportes_page():
-    demo_banner(); header("Reportes","Informes comerciales, stock, deuda, caja y logística."); locked_notice()
-    st.selectbox("Tipo de reporte",["Ventas","Stock","Clientes","Caja","Logística"],disabled=True)
-    st.plotly_chart(styled_fig(px.area(ventas_mes,x="Día",y="Ventas",title="Reporte visual de ventas")),use_container_width=True)
-    st.download_button("Descargar reporte",data="Reporte bloqueado en demo",file_name="demo_bloqueada.txt",disabled=True)
+    banner(); header("Reportes", "Resumen comercial de lista, fraccionamiento, categorías y ventas demo.")
+    df=get_products()
+    resumen = df.groupby("Categoría", as_index=False).agg(Productos=("Producto", "count"), Fraccionables=("Permite fraccionar", lambda x: (x=="Sí").sum()))
+    st.dataframe(resumen, use_container_width=True, hide_index=True)
+    st.plotly_chart(styled_fig(px.bar(resumen.sort_values("Productos", ascending=False).head(12), x="Categoría", y="Productos", title="Top categorías")), use_container_width=True)
 
-def inteligencia_page():
-    demo_banner(); header("Inteligencia de negocio","Indicadores estratégicos para tomar mejores decisiones.")
-    c1,c2=st.columns(2)
-    with c1:
-        margen=pd.DataFrame({"Categoría":["Harinas","Almacén","Bebidas","Lácteos","Pastas"],"Margen":[31,24,38,21,28]})
-        st.plotly_chart(styled_fig(px.bar(margen,x="Categoría",y="Margen",title="Margen promedio por categoría")),use_container_width=True)
-    with c2:
-        proy=pd.DataFrame({"Mes":["Ene","Feb","Mar","Abr","May","Jun"],"Proyección":[8.2,8.7,9.4,10.1,12.8,13.6]})
-        st.plotly_chart(styled_fig(px.line(proy,x="Mes",y="Proyección",markers=True,title="Proyección de ventas estimadas")),use_container_width=True)
-    st.success("Recomendación demo: reforzar stock en bebidas y harinas antes del cierre mensual.")
-
-def configuracion_page():
-    demo_banner(); header("Configuración","Parámetros generales de empresa, usuarios y permisos."); locked_notice()
-    st.text_input("Nombre de la empresa",value="DEL CAMPO DISTRIBUIDORA",disabled=True)
-    st.text_input("CUIT",value="Bloqueado en demo",disabled=True)
-    st.selectbox("Tema visual",["Negro + Dorado Premium"],disabled=True)
-    st.checkbox("Activar ventas",value=True,disabled=True)
-    st.checkbox("Activar stock",value=True,disabled=True)
-    st.checkbox("Activar chat interno",value=True,disabled=True)
-    st.button("Guardar configuración",disabled=True,use_container_width=True)
+def config_page():
+    banner(); header("Configuración", "Boceto de personalización para versión real.")
+    st.text_input("Nombre de la app", value="DON VALENTIN")
+    st.selectbox("Tema visual", ["Negro con retoques dorados"])
+    st.checkbox("Permitir carga de Excel", value=True)
+    st.checkbox("Permitir venta fraccionada por gramos", value=True)
+    st.checkbox("Activar logística", value=True)
+    st.button("Guardar configuración demo", use_container_width=True)
 
 if not st.session_state.logged:
     login()
 else:
     sidebar()
-    pages={"Dashboard":dashboard,"Productos":productos_page,"Ventas":ventas_page,"Clientes":clientes_page,"Caja":caja_page,"Logística":logistica_page,"Chat interno":chat_page,"Reportes":reportes_page,"Inteligencia":inteligencia_page,"Configuración":configuracion_page}
+    pages = {
+        "Dashboard": dashboard,
+        "Lista de precios": lista_precios,
+        "Productos": productos_page,
+        "Venta fraccionada": venta_fraccionada,
+        "Clientes": clientes_page,
+        "Logística": logistica_page,
+        "Reportes": reportes_page,
+        "Configuración": config_page,
+    }
     pages[st.session_state.page]()
