@@ -5,6 +5,7 @@ from datetime import datetime
 import re
 import io
 from pathlib import Path
+import base64
 
 st.set_page_config(page_title="DON VALENTIN", page_icon="🧀", layout="wide", initial_sidebar_state="expanded")
 
@@ -12,6 +13,11 @@ APP_NAME = "DON VALENTIN"
 DEMO_USER = "demo"
 DEMO_PASS = "demo123"
 DEFAULT_EXCEL = Path(__file__).parent / "lista_don_valentin.xlsx"
+MOZZARELLA_IMG = Path(__file__).parent / "assets" / "mozzarella_hero.png"
+try:
+    MOZZARELLA_B64 = base64.b64encode(MOZZARELLA_IMG.read_bytes()).decode("utf-8") if MOZZARELLA_IMG.exists() else ""
+except Exception:
+    MOZZARELLA_B64 = ""
 WHATSAPP_LINK = "https://wa.me/TUNUMERO?text=Hola,%20quiero%20solicitar%20acceso%20completo%20a%20DON%20VALENTIN"
 
 # =========================
@@ -285,17 +291,18 @@ def styled_fig(fig, height=390):
 # LOGIN / SIDEBAR
 # =========================
 def login():
-    st.markdown("""
+    image_html = f'<img class="food-hero" src="data:image/png;base64,{MOZZARELLA_B64}" />' if MOZZARELLA_B64 else '<div class="mozzarella-wrap"><div class="mozzarella"></div></div>'
+    st.markdown(f"""
     <div class="login-shell">
         <div class="premium-login-card">
             <div class="login-inner">
-                <img class="food-hero" src="data:image/png;base64,%s" />
+                {image_html}
                 <div class="brand-word">DON VALENTIN</div>
                 <div class="brand-subline">DISTRIBUIDORA</div>
             </div>
         </div>
     </div>
-    """ % MOZZARELLA_B64, unsafe_allow_html=True)
+    """, unsafe_allow_html=True)
     c1,c2,c3 = st.columns([1,0.98,1])
     with c2:
         st.markdown('<div class="login-form-wrap">', unsafe_allow_html=True)
