@@ -3,6 +3,7 @@ import pandas as pd
 import plotly.express as px
 from datetime import datetime
 import re
+import io
 from pathlib import Path
 
 st.set_page_config(page_title="DON VALENTIN", page_icon="🏢", layout="wide", initial_sidebar_state="expanded")
@@ -89,7 +90,17 @@ def guess_category_row(name, unit_price, kg_price):
     return unit_price is None and kg_price is None and len(txt) < 35
 
 def parse_price_excel(file_obj):
-    raw = pd.read_excel(file_obj, sheet_name=0, header=None)
+    
+    # Lee Excel de forma robusta tanto en local como en Streamlit Cloud.
+    # Si viene desde st.file_uploader, guardamos bytes para evitar errores por el puntero del archivo.
+    if isinstance(file_obj, (bytes, bytearray)):
+        file_obj = io.BytesIO(file_obj)
+    else:
+        try:
+            file_obj.seek(0)
+        except Exception:
+            pass
+    raw = pd.read_excel(file_obj, sheet_name=0, header=None, engine="openpyxl")
     productos = []
     blocks = [(0, 6, 8), (9, 15, 17)]
     for name_col, unit_col, kg_col in blocks:
@@ -132,9 +143,14 @@ def load_default_products():
     })
 
 def get_products():
-    uploaded = st.session_state.get("uploaded_prices", None)
-    if uploaded is not None:
-        return parse_price_excel(uploaded)
+    uploaded_bytes = st.session_state.get("uploaded_prices_bytes", None)
+    if uploaded_bytes is not None:
+        try:
+            return parse_price_excel(uploaded_bytes)
+        except Exception as e:
+            st.error("No se pudo leer el Excel cargado. Revisá que sea un .xlsx válido y que no esté protegido con contraseña.")
+            st.caption(f"Detalle técnico: {e}")
+            return load_default_products()
     return load_default_products()
 
 def price_for_sale(row, grams, units):
@@ -227,7 +243,7 @@ def lista_precios():
     st.markdown('<div class="card"><b>📄 Opción para el cliente:</b> subir su Excel de precios y productos. La app interpreta columnas de productos, precio por unidad y precio por kilo cuando existen.</div>', unsafe_allow_html=True)
     uploaded = st.file_uploader("Subir Excel de precios Don Valentin", type=["xlsx", "xls"])
     if uploaded is not None:
-        st.session_state.uploaded_prices = uploaded
+        st.session_state.uploaded_prices_bytes = uploaded.getvalue()
         st.success("Excel cargado correctamente. El catálogo se actualizó para esta sesión.")
     df = get_products()
     c1,c2,c3=st.columns(3)
