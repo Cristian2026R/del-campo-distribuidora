@@ -6,7 +6,7 @@ import re
 import io
 from pathlib import Path
 
-st.set_page_config(page_title="DON VALENTIN", page_icon="🥖", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="DON VALENTIN", page_icon="🧀", layout="wide", initial_sidebar_state="expanded")
 
 APP_NAME = "DON VALENTIN"
 DEMO_USER = "demo"
@@ -56,8 +56,14 @@ section[data-testid="stSidebar"] *{color:#F8F1D7!important;}
 .ticket-box{background:#fff;color:#111;border-radius:18px;padding:18px;border:2px dashed #B98A1E;font-family:monospace;box-shadow:0 14px 38px rgba(0,0,0,.35);}
 .ticket-box h3{color:#111;text-align:center;margin:0 0 8px 0;}
 .ticket-line{border-top:1px dashed #555;margin:8px 0;}
-.stButton>button{background:linear-gradient(135deg,#B98A1E,#F5D56A);color:#111!important;border:0;border-radius:14px;font-weight:900;padding:12px 18px;}
-.stButton>button:disabled{background:#2b2b2b!important;color:#807244!important;border:1px solid rgba(245,213,106,.18);}
+.stButton>button, .stDownloadButton>button{background:linear-gradient(135deg,#B98A1E,#F5D56A)!important;color:#111!important;border:0!important;border-radius:14px!important;font-weight:900!important;padding:12px 18px!important;box-shadow:0 12px 28px rgba(212,175,55,.18)!important;}
+.stDownloadButton>button:hover, .stButton>button:hover{filter:brightness(1.05);transform:translateY(-1px);}
+.stButton>button:disabled{background:#2b2b2b!important;color:#807244!important;border:1px solid rgba(245,213,106,.18)!important;}
+.login-card{background:radial-gradient(circle at 50% 12%,rgba(245,213,106,.18),transparent 34%),linear-gradient(180deg,rgba(20,20,20,.98),rgba(8,8,8,.98));border:1px solid rgba(245,213,106,.30);border-radius:30px;padding:34px 34px 28px 34px;text-align:center;box-shadow:0 22px 70px rgba(0,0,0,.62);}
+.mozzarella-wrap{height:142px;display:flex;align-items:center;justify-content:center;margin-bottom:10px;}
+.mozzarella{width:150px;height:104px;border-radius:56% 44% 52% 48% / 58% 48% 52% 42%;background:radial-gradient(circle at 38% 30%,#fffef7 0%,#fff6d9 32%,#ead9a8 68%,#cda955 100%);box-shadow:0 18px 45px rgba(245,213,106,.24), inset -14px -12px 22px rgba(91,67,19,.24), inset 18px 14px 22px rgba(255,255,255,.78);position:relative;}
+.mozzarella:before{content:"";position:absolute;width:42px;height:26px;border-radius:50%;background:linear-gradient(135deg,#2f9e44,#8ce99a);left:-18px;bottom:16px;transform:rotate(-28deg);box-shadow:34px -10px 0 -6px #37b24d;}
+.mozzarella:after{content:"• • •";position:absolute;top:18px;left:48px;color:#6b4f1d;font-size:20px;letter-spacing:6px;opacity:.55;}
 .stTextInput input,.stNumberInput input,.stSelectbox div[data-baseweb="select"],.stTextArea textarea{background:#111!important;border:1px solid rgba(245,213,106,.25)!important;color:#F8F1D7!important;}
 [data-testid="stMetric"]{background:linear-gradient(180deg,rgba(22,22,22,.95),rgba(10,10,10,.95));border:1px solid rgba(212,175,55,.22);border-radius:20px;padding:18px;}
 hr{border:0;border-top:1px solid rgba(245,213,106,.18);}
@@ -227,7 +233,7 @@ td{{padding:5px 0;border-bottom:1px dotted #bbb;vertical-align:top;}}
 """
 
 def banner():
-    st.markdown('<div class="demo-banner">✨ DON VALENTIN · DEMO COMERCIAL PREMIUM · Negro con retoques dorados · Lista de precios, productos fraccionables, ticket simple y precios con $.</div>', unsafe_allow_html=True)
+    st.markdown('<div class="demo-banner">✨ Sistema comercial para distribuidora gastronómica · Productos · Precios · Fraccionamiento · Tickets.</div>', unsafe_allow_html=True)
 
 def header(title, subtitle):
     st.markdown(f'<div class="hero"><h1>{title}</h1><p>{subtitle}</p></div>', unsafe_allow_html=True)
@@ -244,13 +250,18 @@ def styled_fig(fig, height=390):
 # =========================
 def login():
     st.markdown("<br><br>", unsafe_allow_html=True)
-    c1,c2,c3=st.columns([1,1.15,1])
+    c1,c2,c3=st.columns([1,1.05,1])
     with c2:
-        st.markdown('<div class="card" style="text-align:center;"><div style="font-size:54px;">🥖</div><div style="font-size:38px;font-weight:900;color:#F5D56A;">DON VALENTIN</div><div style="font-size:17px;font-weight:800;color:#F8F1D7;">Sistema comercial para distribuidora gastronómica</div><div style="color:#c8b46a;margin-top:10px;">Demo premium · Productos · Precios · Fraccionamiento · Tickets</div></div>', unsafe_allow_html=True)
-        st.info("Acceso demo: usuario **demo** · contraseña **demo123**")
+        st.markdown('''
+        <div class="login-card">
+            <div class="mozzarella-wrap"><div class="mozzarella"></div></div>
+            <div style="font-size:42px;font-weight:900;color:#F5D56A;letter-spacing:.5px;">DON VALENTIN</div>
+            <div style="font-size:17px;font-weight:800;color:#F8F1D7;letter-spacing:8px;margin-top:8px;">DISTRIBUIDORA</div>
+        </div>
+        ''', unsafe_allow_html=True)
         user=st.text_input("Usuario", value="demo")
         pwd=st.text_input("Contraseña", type="password", value="demo123")
-        if st.button("Ingresar a la demo", use_container_width=True):
+        if st.button("Ingresar", use_container_width=True):
             if user==DEMO_USER and pwd==DEMO_PASS:
                 st.session_state.logged=True
                 st.rerun()
@@ -260,9 +271,9 @@ def login():
 
 def sidebar():
     with st.sidebar:
-        st.markdown("## 🥖 DON VALENTIN")
-        st.markdown("**Distribuidora gastronómica**")
-        st.caption("Demo premium de venta")
+        st.markdown("## 🧀 DON VALENTIN")
+        st.markdown("**DISTRIBUIDORA**")
+        st.caption("Sistema comercial premium")
         st.markdown("---")
         pages=["Dashboard","Lista de precios","Productos","Venta fraccionada","Ticket / Cobro","Clientes","Logística","Reportes","Configuración"]
         icons={"Dashboard":"📊","Lista de precios":"📄","Productos":"📦","Venta fraccionada":"⚖️","Ticket / Cobro":"🧾","Clientes":"👥","Logística":"🚚","Reportes":"📑","Configuración":"⚙️"}
@@ -271,8 +282,8 @@ def sidebar():
                 st.session_state.page=p
                 st.rerun()
         st.markdown("---")
-        st.success("Demo visual activa")
-        st.caption("Lista cargable · Fraccionamiento · Ticket simple")
+        st.success("Sistema visual activo")
+        st.caption("Lista cargable · Fraccionamiento · Ticket")
         if st.button("Cerrar demo", use_container_width=True):
             st.session_state.logged=False
             st.rerun()
@@ -283,7 +294,7 @@ def sidebar():
 def dashboard():
     banner()
     df = get_products()
-    header("DON VALENTIN", "Boceto comercial para que el cliente visualice el sistema: precios, productos, ventas por gramos, cobro y ticket simple.")
+    header("DON VALENTIN", "Sistema comercial para visualizar precios, productos, ventas por gramos, cobro y ticket simple.")
     activos = int((df["Estado"] == "Activo").sum()) if not df.empty else 0
     fracc = int((df["Permite fraccionar"] == "Sí").sum()) if not df.empty else 0
     valor_lista = df[["Precio unidad", "Precio kg"]].max(axis=1).sum() if not df.empty else 0
@@ -299,7 +310,7 @@ def dashboard():
     with col2:
         status = df.groupby("Estado", as_index=False).size().rename(columns={"size":"Cantidad"})
         st.plotly_chart(styled_fig(px.pie(status, names="Estado", values="Cantidad", hole=.55, title="Estado de lista"), 420), use_container_width=True)
-    st.markdown('<div class="success-box">💡 Nueva versión: precios visibles con $, descarga de lista formateada, venta fraccionada y ticket simple imprimible. El ticket NO es factura ARCA.</div>', unsafe_allow_html=True)
+    st.markdown('<div class="success-box">💡 Precios visibles con $, descarga de lista formateada, venta fraccionada y ticket simple imprimible. El ticket NO es factura ARCA.</div>', unsafe_allow_html=True)
 
 def lista_precios():
     banner(); header("Lista de precios", "Subida de Excel de productos y precios para actualizar el catálogo comercial.")
@@ -332,14 +343,14 @@ def productos_page():
         view=view[view["Permite fraccionar"]==fraccion]
     st.dataframe(format_catalog(view), use_container_width=True, hide_index=True, height=430)
     st.subheader("➕ Carga manual de producto")
-    st.markdown('<div class="card">En la versión real, este formulario guardaría productos nuevos en base de datos. En la demo queda como boceto visual para presentar al cliente.</div>', unsafe_allow_html=True)
+    st.markdown('<div class="card">Formulario para cargar productos nuevos en el sistema comercial.</div>', unsafe_allow_html=True)
     a,b,c,d=st.columns(4)
     with a: st.text_input("Producto nuevo", placeholder="Ej: Queso cremoso x kg")
     with b: st.selectbox("Categoría nueva", sorted(df["Categoría"].dropna().unique().tolist()) + ["Nueva categoría"])
     with c: st.number_input("Precio unidad", min_value=0, step=100, format="%d")
     with d: st.number_input("Precio kg", min_value=0, step=100, format="%d")
     st.caption("Los precios se mostrarán con signo $ en tablas, venta y ticket.")
-    st.button("Guardar producto demo", use_container_width=True)
+    st.button("Guardar producto", use_container_width=True)
 
 def venta_fraccionada():
     banner(); header("Venta fraccionada", "Carga visual de compras por unidad o por gramos: 100g, 200g, 300g, 500g, 1kg, etc.")
@@ -403,7 +414,7 @@ def venta_fraccionada():
         show_cols = [c for c in ["Fecha","Cliente","Producto","Cantidad","Método de pago","Total $","Ticket"] if c in ventas.columns]
         st.dataframe(ventas[show_cols], use_container_width=True, hide_index=True)
         total_dia = ventas["Total"].sum() if "Total" in ventas else 0
-        st.metric("Total aplicado demo", money(total_dia))
+        st.metric("Total aplicado", money(total_dia))
 
 def ticket_page():
     banner(); header("Ticket / Cobro", "Vista previa de ticket simple interno, listo para descargar o imprimir desde el navegador.")
@@ -413,9 +424,9 @@ def ticket_page():
         ticket = {
             "Número":"T-DEMO",
             "Fecha":datetime.now().strftime("%d/%m/%Y %H:%M"),
-            "Cliente":"Cliente demo",
+            "Cliente":"Cliente",
             "Método de pago":"Efectivo",
-            "Items":[{"Producto":"Producto demo fraccionado","Cantidad":"300 g","Total":1350}],
+            "Items":[{"Producto":"Producto fraccionado","Cantidad":"300 g","Total":1350}],
             "Total":1350,
         }
     items_html = "".join([f"<div>{i['Producto']} · {i['Cantidad']} <span style='float:right'>{money(i['Total'])}</span></div>" for i in ticket.get("Items", [])])
@@ -438,7 +449,7 @@ def ticket_page():
     """, unsafe_allow_html=True)
     html = make_ticket_html(ticket)
     st.download_button("⬇️ Descargar ticket HTML para imprimir", data=html.encode("utf-8"), file_name=f"ticket_{ticket.get('Número','demo')}.html", mime="text/html", use_container_width=True)
-    st.caption("Para imprimir: descargá el HTML, abrilo en el navegador y tocá Imprimir. En versión real se puede conectar a impresora/ticketeadora común.")
+    st.caption("Para imprimir: descargá el HTML, abrilo en el navegador y tocá Imprimir. También puede adaptarse a impresora/ticketeadora común.")
 
 def clientes_page():
     banner(); header("Clientes", "Alta de clientes, cartera comercial y ejemplo de compras fraccionadas por negocio.")
@@ -453,7 +464,7 @@ def clientes_page():
         ]
 
     st.subheader("➕ Cargar cliente nuevo")
-    st.markdown('<div class="card">Formulario visible para que el cliente vea cómo dar de alta compradores, comercios o cuentas corrientes en la versión real.</div>', unsafe_allow_html=True)
+    st.markdown('<div class="card">Formulario para dar de alta compradores, comercios o cuentas corrientes.</div>', unsafe_allow_html=True)
 
     c1, c2, c3 = st.columns(3)
     with c1:
@@ -477,7 +488,7 @@ def clientes_page():
             })
             if nuevo_cliente.strip() not in st.session_state.clientes_demo:
                 st.session_state.clientes_demo.append(nuevo_cliente.strip())
-            st.success("Cliente cargado en la demo. En versión real quedaría guardado en base de datos.")
+            st.success("Cliente cargado correctamente.")
         else:
             st.warning("Ingresá el nombre del cliente.")
 
@@ -504,11 +515,11 @@ def reportes_page():
     st.plotly_chart(styled_fig(px.bar(resumen.sort_values("Productos", ascending=False).head(12), x="Categoría", y="Productos", title="Top categorías")), use_container_width=True)
     if st.session_state.ventas_demo:
         ventas = pd.DataFrame(st.session_state.ventas_demo)
-        st.subheader("Ventas demo registradas")
+        st.subheader("Ventas registradas")
         st.dataframe(ventas[["Fecha","Cliente","Producto","Cantidad","Método de pago","Total $","Ticket"]], use_container_width=True, hide_index=True)
 
 def config_page():
-    banner(); header("Configuración", "Boceto de personalización para versión real.")
+    banner(); header("Configuración", "Personalización general del sistema.")
     st.text_input("Nombre de la app", value="DON VALENTIN")
     st.selectbox("Tema visual", ["Negro con retoques dorados"])
     st.checkbox("Permitir carga de Excel", value=True)
@@ -516,7 +527,7 @@ def config_page():
     st.checkbox("Permitir venta fraccionada por gramos", value=True)
     st.checkbox("Generar ticket simple", value=True)
     st.checkbox("Activar logística", value=True)
-    st.button("Guardar configuración demo", use_container_width=True)
+    st.button("Guardar configuración", use_container_width=True)
 
 if not st.session_state.logged:
     login()
