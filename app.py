@@ -374,31 +374,91 @@ def styled_fig(fig, height=390):
 # LOGIN / SIDEBAR
 # =========================
 def login():
-    image_html = f'<img class="food-hero" src="data:image/png;base64,{MOZZARELLA_B64}" />' if MOZZARELLA_B64 else '<div class="mozzarella-wrap"><div class="mozzarella"></div></div>'
-    st.markdown(f"""
-    <div class="login-shell">
-        <div class="premium-login-card">
-            <div class="login-inner">
-                {image_html}
-                <div class="brand-word">DON VALENTIN</div>
-                <div class="brand-subline">DISTRIBUIDORA</div>
+    st.markdown("""
+    <style>
+    .blocked-wrapper {
+        min-height: 92vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+    }
+    .blocked-card {
+        width: min(760px, 94vw);
+        text-align: center;
+        background:
+            radial-gradient(circle at 50% 0%, rgba(245,213,106,.20), transparent 34%),
+            linear-gradient(180deg, rgba(18,18,18,.96), rgba(4,4,4,.98));
+        border: 1px solid rgba(245,213,106,.42);
+        border-radius: 34px;
+        padding: 56px 46px;
+        box-shadow: 0 34px 100px rgba(0,0,0,.78), 0 0 80px rgba(212,175,55,.10);
+    }
+    .blocked-logo {
+        font-size: 56px;
+        font-weight: 900;
+        color: #F5D56A;
+        letter-spacing: .8px;
+        line-height: 1;
+        text-shadow: 0 10px 32px rgba(245,213,106,.18);
+    }
+    .blocked-subtitle {
+        margin-top: 18px;
+        color: #F8F1D7;
+        font-size: 18px;
+        font-weight: 900;
+        letter-spacing: 10px;
+    }
+    .blocked-line {
+        width: 170px;
+        height: 1px;
+        margin: 32px auto;
+        background: linear-gradient(90deg, transparent, #F5D56A, transparent);
+    }
+    .blocked-alert {
+        display: inline-block;
+        background: rgba(245,213,106,.10);
+        border: 1px solid rgba(245,213,106,.40);
+        color: #FFE89A;
+        padding: 13px 20px;
+        border-radius: 999px;
+        font-size: 18px;
+        font-weight: 900;
+        margin-bottom: 22px;
+    }
+    .blocked-text {
+        color: #E7DCA8;
+        font-size: 17px;
+        line-height: 1.75;
+        max-width: 580px;
+        margin: 0 auto;
+        font-weight: 600;
+    }
+    .blocked-footer {
+        margin-top: 30px;
+        color: #BBA762;
+        font-size: 14px;
+        font-weight: 700;
+    }
+    </style>
+
+    <div class="blocked-wrapper">
+        <div class="blocked-card">
+            <div class="blocked-logo">DON VALENTIN</div>
+            <div class="blocked-subtitle">DISTRIBUIDORA</div>
+            <div class="blocked-line"></div>
+            <div class="blocked-alert">🔒 Acceso temporalmente suspendido</div>
+            <div class="blocked-text">
+                Esta demostración se encuentra actualmente en proceso de revisión e implementación comercial.<br><br>
+                Para solicitar una presentación, capacitación o activación del sistema, comuníquese con administración.
+            </div>
+            <div class="blocked-footer">
+                Sistema protegido · Acceso privado · Versión comercial
             </div>
         </div>
     </div>
     """, unsafe_allow_html=True)
-    c1,c2,c3 = st.columns([1,0.82,1])
-    with c2:
-        st.markdown('<div class="login-form-wrap">', unsafe_allow_html=True)
-        user=st.text_input("Usuario", value="demo", placeholder="Usuario", label_visibility="collapsed")
-        pwd=st.text_input("Contraseña", type="password", value="demo123", placeholder="Contraseña", label_visibility="collapsed")
-        if st.button("🔒 Ingresar", use_container_width=True):
-            if user==DEMO_USER and pwd==DEMO_PASS:
-                st.session_state.logged=True
-                st.rerun()
-            else:
-                st.error("Acceso no autorizado.")
-        st.link_button("📞 Solicitar implementación completa", WHATSAPP_LINK, use_container_width=True)
-        st.markdown('</div>', unsafe_allow_html=True)
+    st.stop()
 
 def sidebar():
     with st.sidebar:
