@@ -260,7 +260,7 @@ def parse_price_excel(file_obj):
                 "Precio unidad": precio_und if precio_und is not None else 0,
                 "Precio kg": precio_kg if precio_kg is not None else 0,
                 "Permite fraccionar": "Sí" if precio_kg is not None or any(w in nombre.lower() for w in ["kg", "gr", "grs", "panceta", "jamon", "paleta", "queso"]) else "No",
-                "Stock demo": 0 if estado == "Sin stock" else 25 + (len(productos) * 7) % 95,
+                "Stock": 0 if estado == "Sin stock" else 25 + (len(productos) * 7) % 95,
                 "Estado": estado
             })
     df = pd.DataFrame(productos).drop_duplicates(subset=["Producto", "Categoría"], keep="first")
@@ -272,7 +272,7 @@ def load_default_products():
         return parse_price_excel(DEFAULT_EXCEL)
     return pd.DataFrame({
         "Código": ["DV-0001"], "Producto": ["Mozzarella X 10kg"], "Categoría": ["Mozzarellas"],
-        "Precio unidad": [65000], "Precio kg": [0], "Permite fraccionar": ["No"], "Stock demo": [30], "Estado": ["Activo"]
+        "Precio unidad": [65000], "Precio kg": [0], "Permite fraccionar": ["No"], "Stock": [30], "Estado": ["Activo"]
     })
 
 def get_products():
@@ -352,7 +352,6 @@ td{{padding:5px 0;border-bottom:1px dotted #bbb;vertical-align:top;}}
 <div class='line'></div>
 <div class='total'>TOTAL {money(ticket.get('Total',0))}</div>
 <div class='line'></div>
-<p style='text-align:center;font-size:11px;'>Comprobante interno no fiscal.<br>Para factura ARCA se requiere módulo fiscal.</p>
 </div>
 </body></html>
 """
@@ -389,15 +388,14 @@ def login():
     c1,c2,c3 = st.columns([1,0.82,1])
     with c2:
         st.markdown('<div class="login-form-wrap">', unsafe_allow_html=True)
-        user=st.text_input("Usuario", value="demo", placeholder="Usuario", label_visibility="collapsed")
-        pwd=st.text_input("Contraseña", type="password", value="demo123", placeholder="Contraseña", label_visibility="collapsed")
+        user=st.text_input("Usuario", value="", placeholder="Usuario", label_visibility="collapsed")
+        pwd=st.text_input("Contraseña", type="password", value="", placeholder="Contraseña", label_visibility="collapsed")
         if st.button("🔒 Ingresar", use_container_width=True):
             if user==DEMO_USER and pwd==DEMO_PASS:
                 st.session_state.logged=True
                 st.rerun()
             else:
                 st.error("Acceso no autorizado.")
-        st.link_button("📞 Solicitar implementación completa", WHATSAPP_LINK, use_container_width=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
 def sidebar():
@@ -415,7 +413,7 @@ def sidebar():
         st.markdown("---")
         st.success("Sistema visual activo")
         st.caption("Lista cargable · Fraccionamiento · Ticket")
-        if st.button("Cerrar demo", use_container_width=True):
+        if st.button("Cerrar sesión", use_container_width=True):
             st.session_state.logged=False
             st.rerun()
 
@@ -441,7 +439,7 @@ def dashboard():
     with col2:
         status = df.groupby("Estado", as_index=False).size().rename(columns={"size":"Cantidad"})
         st.plotly_chart(styled_fig(px.pie(status, names="Estado", values="Cantidad", hole=.55, title="Estado de lista"), 420), use_container_width=True)
-    st.markdown('<div class="success-box">💡 Precios visibles con $, descarga de lista formateada, venta fraccionada y ticket simple imprimible. El ticket NO es factura ARCA.</div>', unsafe_allow_html=True)
+    st.markdown('<div class="success-box">💡 Precios visibles con $, descarga de lista formateada, venta fraccionada y ticket simple imprimible. Ticket listo para imprimir.</div>', unsafe_allow_html=True)
 
 def lista_precios():
     banner(); header("Lista de precios", "Subida de Excel de productos y precios para actualizar el catálogo comercial.")
@@ -544,9 +542,9 @@ def venta_fraccionada():
             ventas = pd.DataFrame(st.session_state.ventas_demo)
         else:
             ventas = pd.DataFrame([
-                {"Fecha":"Hoy 09:20","Cliente":"Pizzería La Esquina","Producto":"Mozzarella Doña Emilse X10Kg","Modo":"Por gramos","Cantidad":"500 g","Total":3250,"Total $":money(3250),"Método de pago":"Efectivo","Ticket":"T-DEMO1"},
-                {"Fecha":"Hoy 10:05","Cliente":"Rotisería Avenida","Producto":"Panceta Luvianka Ahumada","Modo":"Por gramos","Cantidad":"300 g","Total":3300,"Total $":money(3300),"Método de pago":"Transferencia","Ticket":"T-DEMO2"},
-                {"Fecha":"Hoy 11:12","Cliente":"Almacén Don Luis","Producto":"Aceituna Verde 1 X5Kg Garrafa","Modo":"Por unidad","Cantidad":"1 u.","Total":24000,"Total $":money(24000),"Método de pago":"Mercado Pago","Ticket":"T-DEMO3"},
+                {"Fecha":"Hoy 09:20","Cliente":"Pizzería La Esquina","Producto":"Mozzarella Doña Emilse X10Kg","Modo":"Por gramos","Cantidad":"500 g","Total":3250,"Total $":money(3250),"Método de pago":"Efectivo","Ticket":"T-0001"},
+                {"Fecha":"Hoy 10:05","Cliente":"Rotisería Avenida","Producto":"Panceta Luvianka Ahumada","Modo":"Por gramos","Cantidad":"300 g","Total":3300,"Total $":money(3300),"Método de pago":"Transferencia","Ticket":"T-0002"},
+                {"Fecha":"Hoy 11:12","Cliente":"Almacén Don Luis","Producto":"Aceituna Verde 1 X5Kg Garrafa","Modo":"Por unidad","Cantidad":"1 u.","Total":24000,"Total $":money(24000),"Método de pago":"Mercado Pago","Ticket":"T-0003"},
             ])
         show_cols = [c for c in ["Fecha","Cliente","Producto","Cantidad","Método de pago","Total $","Ticket"] if c in ventas.columns]
         st.dataframe(ventas[show_cols], use_container_width=True, hide_index=True)
@@ -559,7 +557,7 @@ def ticket_page():
     if ticket is None:
         st.info("Todavía no generaste un ticket. Entrá en Venta fraccionada, aplicá una compra y se generará acá.")
         ticket = {
-            "Número":"T-DEMO",
+            "Número":"T-0000",
             "Fecha":datetime.now().strftime("%d/%m/%Y %H:%M"),
             "Cliente":"Cliente",
             "Método de pago":"Efectivo",
@@ -570,7 +568,7 @@ def ticket_page():
     st.markdown(f"""
     <div class='ticket-box'>
         <h3>DON VALENTIN</h3>
-        <div style='text-align:center;'>Ticket interno</div>
+        <div style='text-align:center;'>Ticket</div>
         <div class='ticket-line'></div>
         <b>N°:</b> {ticket.get('Número')}<br>
         <b>Fecha:</b> {ticket.get('Fecha')}<br>
@@ -581,12 +579,11 @@ def ticket_page():
         <div class='ticket-line'></div>
         <div style='font-size:22px;font-weight:900;text-align:right;'>TOTAL {money(ticket.get('Total',0))}</div>
         <div class='ticket-line'></div>
-        
+    </div>
     """, unsafe_allow_html=True)
     html = make_ticket_html(ticket)
     st.download_button("⬇️ Descargar ticket HTML para imprimir", data=html.encode("utf-8"), file_name=f"ticket_{ticket.get('Número','demo')}.html", mime="text/html", use_container_width=True)
     st.markdown('<div class="success-box">🖨️ Impresión real con HP Smart Tank 750: descargá el ticket, abrilo en Chrome/Edge y tocá <b>Imprimir</b> o <b>Ctrl + P</b>. Elegí la impresora HP Smart Tank 750 en Windows.</div>', unsafe_allow_html=True)
-    
 
 def clientes_page():
     banner(); header("Clientes", "Alta de clientes, cartera comercial y ejemplo de compras fraccionadas por negocio.")
