@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-from datetime import datetime
+from datetime import datetime, timedelta
 import re
 import io
 from pathlib import Path
@@ -160,6 +160,31 @@ def init_data_db():
             medio TEXT DEFAULT '',
             observaciones TEXT DEFAULT '',
             creado_en TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS producto_stock (
+            producto TEXT PRIMARY KEY,
+            stock REAL DEFAULT 0,
+            unidad TEXT DEFAULT 'kg',
+            actualizado_en TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS cliente_pagos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            fecha TEXT NOT NULL,
+            cliente TEXT NOT NULL,
+            monto REAL NOT NULL,
+            medio TEXT DEFAULT '',
+            observaciones TEXT DEFAULT '',
+            creado_en TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS tickets_stock_descontado (
+            ticket TEXT PRIMARY KEY,
+            fecha TEXT NOT NULL
         )
     """)
     defaults = [
@@ -339,6 +364,143 @@ def costo_promedio_por_producto():
         total_cantidad = g["Cantidad"].sum()
         costos[producto] = total_costo / total_cantidad if total_cantidad else 0
     return costos
+
+def save_product_stock(producto, stock, unidad):
+    init_data_db()
+    conn = get_data_conn()
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT OR REPLACE INTO producto_stock (producto, stock, unidad, actualizado_en)
+        VALUES (?, ?, ?, ?)
+    """, (producto, float(stock or 0), unidad, datetime.now().strftime("%d/%m/%Y %H:%M")))
+    conn.commit()
+    conn.close()
+
+
+def load_product_stock_df():
+    init_data_db()
+    conn = get_data_conn()
+    df = pd.read_sql_query("SELECT producto AS Producto, stock AS 'Stock real', unidad AS Unidad, actualizado_en AS 'Actualizado' FROM producto_stock ORDER BY producto", conn)
+    conn.close()
+    return df
+
+
+def get_stock_map():
+    df = load_product_stock_df()
+    if df.empty:
+        return {}
+    return {r["Producto"]: {"stock": float(r["Stock real"] or 0), "unidad": r["Unidad"]} for _, r in df.iterrows()}
+
+
+def decrement_stock_for_ticket(ticket):
+    init_data_db()
+    ticket_num = ticket.get("Número") if isinstance(ticket, dict) else str(ticket)
+    if not ticket_num:
+        return "Sin número de ticket."
+    conn = get_data_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT ticket FROM tickets_stock_descontado WHERE ticket = ?", (ticket_num,))
+    if cur.fetchone():
+        conn.close()
+        return "El stock de este ticket ya fue descontado anteriormente."
+    items = ticket.get("Items", []) if isinstance(ticket, dict) else []
+    for item in items:
+        producto = item.get("Producto", "")
+        cantidad_base = float(item.get("Cantidad base", 0) or 0)
+        if cantidad_base <= 0:
+            cantidad_base = float(item.get("Unidades", 0) or 0)
+        if producto and cantidad_base > 0:
+            cur.execute("SELECT stock, unidad FROM producto_stock WHERE producto = ?", (producto,))
+            row = cur.fetchone()
+            if row:
+                nuevo_stock = float(row[0] or 0) - cantidad_base
+                cur.execute("UPDATE producto_stock SET stock = ?, actualizado_en = ? WHERE producto = ?", (nuevo_stock, datetime.now().strftime("%d/%m/%Y %H:%M"), producto))
+            else:
+                cur.execute("INSERT INTO producto_stock (producto, stock, unidad, actualizado_en) VALUES (?, ?, ?, ?)", (producto, -cantidad_base, "kg/u", datetime.now().strftime("%d/%m/%Y %H:%M")))
+    cur.execute("INSERT OR REPLACE INTO tickets_stock_descontado (ticket, fecha) VALUES (?, ?)", (ticket_num, datetime.now().strftime("%d/%m/%Y %H:%M")))
+    conn.commit()
+    conn.close()
+    return "Stock actualizado correctamente."
+
+
+def save_cliente_pago(fecha, cliente, monto, medio, observaciones):
+    init_data_db()
+    conn = get_data_conn()
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO cliente_pagos (fecha, cliente, monto, medio, observaciones)
+        VALUES (?, ?, ?, ?, ?)
+    """, (fecha, cliente, float(monto or 0), medio, observaciones or ""))
+    conn.commit()
+    conn.close()
+
+
+def load_cliente_pagos_df():
+    init_data_db()
+    conn = get_data_conn()
+    df = pd.read_sql_query("SELECT fecha AS Fecha, cliente AS Cliente, monto AS Monto, medio AS Medio, observaciones AS Observaciones FROM cliente_pagos ORDER BY id DESC", conn)
+    conn.close()
+    if not df.empty:
+        df["Monto $"] = df["Monto"].apply(money)
+    return df
+
+
+def parse_fecha(fecha):
+    for fmt in ("%d/%m/%Y %H:%M", "%d/%m/%Y", "%Y-%m-%d %H:%M:%S"):
+        try:
+            return datetime.strptime(str(fecha), fmt)
+        except Exception:
+            pass
+    return None
+
+
+def is_today(fecha):
+    dt = parse_fecha(fecha)
+    return dt is not None and dt.date() == datetime.now().date()
+
+
+def clientes_facturacion_df():
+    ventas = load_ventas_df()
+    pagos = load_cliente_pagos_df()
+    clientes = load_clientes_df()
+    nombres = set(clientes["Cliente"].tolist()) if not clientes.empty else set()
+    if not ventas.empty:
+        nombres.update(ventas["Cliente"].dropna().astype(str).tolist())
+    if not pagos.empty:
+        nombres.update(pagos["Cliente"].dropna().astype(str).tolist())
+    rows = []
+    now = datetime.now()
+    for cliente in sorted(nombres):
+        v = ventas[ventas["Cliente"] == cliente] if not ventas.empty else pd.DataFrame()
+        p = pagos[pagos["Cliente"] == cliente] if not pagos.empty else pd.DataFrame()
+        facturado = float(v["Total"].sum()) if not v.empty else 0.0
+        pagado_auto = float(v[v["Método de pago"] != "Cuenta corriente"]["Total"].sum()) if not v.empty and "Método de pago" in v else 0.0
+        pagado_manual = float(p["Monto"].sum()) if not p.empty else 0.0
+        pagado = pagado_auto + pagado_manual
+        deuda = max(facturado - pagado, 0.0)
+        fechas_deuda = []
+        if not v.empty:
+            for _, r in v[v["Método de pago"] == "Cuenta corriente"].iterrows():
+                dt = parse_fecha(r["Fecha"])
+                if dt:
+                    fechas_deuda.append(dt)
+        ultima_deuda = max(fechas_deuda).strftime("%d/%m/%Y") if fechas_deuda else "-"
+        dias = max([(now - d).days for d in fechas_deuda], default=0)
+        alerta = "⚠️ Más de 7 días sin pagar" if deuda > 0 and dias >= 7 else "OK"
+        rows.append({
+            "Cliente": cliente,
+            "Facturado": facturado,
+            "Facturado $": money(facturado),
+            "Pagado": pagado,
+            "Pagado $": money(pagado),
+            "Debe": deuda,
+            "Debe $": money(deuda),
+            "Última deuda": ultima_deuda,
+            "Días deuda": dias,
+            "Alerta": alerta,
+        })
+    return pd.DataFrame(rows)
+
 
 init_data_db()
 
@@ -782,8 +944,10 @@ def lista_precios():
     st.download_button("⬇️ Descargar lista con precios en $", data=excel_catalog_download(df), file_name="lista_don_valentin_con_pesos.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
 
 def productos_page():
-    banner(); header("Productos", "Catálogo profesional con categorías, precios con $, stock demo y estado comercial.")
+    banner(); header("Productos", "Catálogo con precios, fraccionamiento y stock real editable para uso diario.")
     df = get_products()
+    stock_df = load_product_stock_df()
+    stock_map = get_stock_map()
     c1,c2,c3=st.columns(3)
     with c1: busqueda=st.text_input("Buscar producto")
     with c2: categoria=st.selectbox("Categoría", ["Todas"] + sorted(df["Categoría"].dropna().unique().tolist()))
@@ -795,15 +959,34 @@ def productos_page():
         view=view[view["Categoría"]==categoria]
     if fraccion!="Todos":
         view=view[view["Permite fraccionar"]==fraccion]
+    if not view.empty:
+        view["Stock real"] = view["Producto"].apply(lambda x: stock_map.get(x, {}).get("stock", 0))
+        view["Unidad stock"] = view["Producto"].apply(lambda x: stock_map.get(x, {}).get("unidad", "kg/u"))
     st.dataframe(format_catalog(view), use_container_width=True, hide_index=True, height=430)
+
+    st.subheader("📦 Actualizar stock real")
+    st.markdown('<div class="card">El cliente carga el stock real que tiene. Cuando descarga/imprime un ticket, el sistema descuenta automáticamente lo vendido.</div>', unsafe_allow_html=True)
+    a,b,c = st.columns(3)
+    with a:
+        producto_stock = st.selectbox("Producto para actualizar stock", df["Producto"].tolist() if not df.empty else ["Producto"])
+    with b:
+        stock_actual = stock_map.get(producto_stock, {}).get("stock", 0)
+        nuevo_stock = st.number_input("Stock real", min_value=-999999.0, value=float(stock_actual or 0), step=1.0)
+    with c:
+        unidad_stock = st.selectbox("Unidad stock", ["kg", "unidad", "bolsa", "caja", "bulto", "kg/u"], index=0)
+    if st.button("Guardar stock real", use_container_width=True):
+        save_product_stock(producto_stock, nuevo_stock, unidad_stock)
+        st.success("Stock real actualizado correctamente.")
+        st.rerun()
+
     st.subheader("➕ Carga manual de producto")
-    st.markdown('<div class="card">Formulario para cargar productos nuevos en el sistema comercial.</div>', unsafe_allow_html=True)
+    st.markdown('<div class="card">Formulario visual para cargar productos nuevos en el sistema comercial.</div>', unsafe_allow_html=True)
     a,b,c,d=st.columns(4)
     with a: st.text_input("Producto nuevo", placeholder="Ej: Queso cremoso x kg")
-    with b: st.selectbox("Categoría nueva", sorted(df["Categoría"].dropna().unique().tolist()) + ["Nueva categoría"])
+    with b: st.selectbox("Categoría nueva", sorted(df["Categoría"].dropna().unique().tolist()) + ["Nueva categoría"] if not df.empty else ["Nueva categoría"])
     with c: st.number_input("Precio unidad", min_value=0, step=100, format="%d")
     with d: st.number_input("Precio kg", min_value=0, step=100, format="%d")
-    st.caption("Los precios se mostrarán con signo $ en tablas, venta y ticket.")
+    st.caption("La carga manual queda preparada visualmente. Para catálogo permanente masivo, usar Excel de lista de precios.")
     st.button("Guardar producto", use_container_width=True)
 
 def venta_fraccionada():
@@ -930,7 +1113,7 @@ def venta_fraccionada():
         st.metric("Total vendido", money(ventas["Total"].sum()))
 
 def ticket_page():
-    banner(); header("Ticket / Cobro", "Vista previa de ticket listo para imprimir en HP Smart Tank 750 desde el navegador.")
+    banner(); header("Ticket / Cobro", "Vista previa de ticket listo para imprimir. Al descargar/imprimir se actualiza el stock real.")
     ticket = st.session_state.get("last_ticket")
     if ticket is None:
         st.info("Todavía no generaste un ticket. Entrá en Venta fraccionada, aplicá una compra y se generará acá.")
@@ -939,7 +1122,7 @@ def ticket_page():
             "Fecha":datetime.now().strftime("%d/%m/%Y %H:%M"),
             "Cliente":"Cliente",
             "Método de pago":"Efectivo",
-            "Items":[{"Producto":"Producto fraccionado","Cantidad":"300 g","Total":1350}],
+            "Items":[{"Producto":"Producto fraccionado","Cantidad":"300 g","Cantidad base":0.3,"Total":1350}],
             "Total":1350,
         }
     items_html = "".join([f"<div>{i['Producto']} · {i['Cantidad']} <span style='float:right'>{money(i['Total'])}</span></div>" for i in ticket.get("Items", [])])
@@ -956,15 +1139,18 @@ def ticket_page():
         {items_html}
         <div class='ticket-line'></div>
         <div style='font-size:22px;font-weight:900;text-align:right;'>TOTAL {money(ticket.get('Total',0))}</div>
-        <div class='ticket-line'></div>
     </div>
     """, unsafe_allow_html=True)
     html = make_ticket_html(ticket)
-    st.download_button("⬇️ Descargar ticket HTML para imprimir", data=html.encode("utf-8"), file_name=f"ticket_{ticket.get('Número','demo')}.html", mime="text/html", use_container_width=True)
-    st.markdown('<div class="success-box">🖨️ Impresión real con HP Smart Tank 750: descargá el ticket, abrilo en Chrome/Edge y tocá <b>Imprimir</b> o <b>Ctrl + P</b>. Elegí la impresora HP Smart Tank 750 en Windows.</div>', unsafe_allow_html=True)
+    def _descontar_stock():
+        st.session_state.stock_msg = decrement_stock_for_ticket(ticket)
+    st.download_button("⬇️ Descargar ticket e imprimir", data=html.encode("utf-8"), file_name=f"ticket_{ticket.get('Número','demo')}.html", mime="text/html", use_container_width=True, on_click=_descontar_stock)
+    if st.session_state.get("stock_msg"):
+        st.success(st.session_state.stock_msg)
+    st.markdown('<div class="success-box">🖨️ Para imprimir: descargá el ticket, abrilo en Chrome/Edge y tocá <b>Ctrl + P</b>. Al tocar el botón de descarga, el stock se descuenta una sola vez por ticket.</div>', unsafe_allow_html=True)
 
 def clientes_page():
-    banner(); header("Clientes", "Alta de clientes y cartera comercial guardada de forma permanente.")
+    banner(); header("Clientes", "Alta de clientes, facturación, pagos parciales, deuda y alertas de cobranza.")
 
     st.subheader("➕ Cargar cliente nuevo")
     st.markdown('<div class="card">Formulario para dar de alta compradores, comercios o cuentas corrientes. Los clientes quedan guardados en la base de datos.</div>', unsafe_allow_html=True)
@@ -988,14 +1174,44 @@ def clientes_page():
         else:
             st.warning("Ingresá el nombre del cliente.")
 
+    st.subheader("💰 Registrar pago parcial o total de cliente")
+    nombres = get_client_names()
+    p1, p2, p3 = st.columns(3)
+    with p1:
+        cliente_pago = st.selectbox("Cliente que paga", nombres)
+        monto_pago = st.number_input("Monto pagado", min_value=0.0, value=0.0, step=100.0)
+    with p2:
+        medio_pago = st.selectbox("Medio de pago cliente", ["Efectivo", "Transferencia", "Mercado Pago", "Cheque", "Otro"])
+    with p3:
+        obs_pago = st.text_input("Observación pago", placeholder="Ej: pago parcial cuenta corriente")
+    if st.button("Guardar pago del cliente", use_container_width=True):
+        if monto_pago <= 0:
+            st.warning("Ingresá un monto mayor a cero.")
+        else:
+            fecha = datetime.now().strftime("%d/%m/%Y %H:%M")
+            save_cliente_pago(fecha, cliente_pago, monto_pago, medio_pago, obs_pago)
+            save_movimiento_caja(fecha, "Ingreso", f"Pago cliente {cliente_pago}", monto_pago, medio_pago, obs_pago)
+            st.success("Pago guardado. Caja y cuenta del cliente actualizadas.")
+
+    st.subheader("📊 Facturación, pagos y deuda por cliente")
+    resumen = clientes_facturacion_df()
+    if not resumen.empty:
+        alertas = resumen[resumen["Alerta"].str.contains("Más de 7", na=False)]
+        if not alertas.empty:
+            st.warning(f"⚠️ Hay {len(alertas)} cliente(s) con deuda de más de 7 días.")
+            st.dataframe(alertas[["Cliente", "Facturado $", "Pagado $", "Debe $", "Última deuda", "Días deuda", "Alerta"]], use_container_width=True, hide_index=True)
+        st.dataframe(resumen[["Cliente", "Facturado $", "Pagado $", "Debe $", "Última deuda", "Días deuda", "Alerta"]], use_container_width=True, hide_index=True)
+    else:
+        st.info("Todavía no hay facturación registrada por cliente.")
+
     st.subheader("👥 Clientes guardados")
     clientes = load_clientes_df()
     st.dataframe(clientes, use_container_width=True, hide_index=True)
 
-    st.subheader("📊 Vista comercial")
-    if not clientes.empty:
-        resumen = clientes.groupby("Tipo", as_index=False).size().rename(columns={"size":"Cantidad"})
-        st.plotly_chart(styled_fig(px.bar(resumen, x="Tipo", y="Cantidad", text_auto=True, title="Clientes por tipo de negocio"), 360), use_container_width=True)
+    pagos = load_cliente_pagos_df()
+    if not pagos.empty:
+        st.subheader("📥 Pagos de clientes registrados")
+        st.dataframe(pagos[["Fecha", "Cliente", "Monto $", "Medio", "Observaciones"]], use_container_width=True, hide_index=True)
 
 def proveedores_page():
     banner(); header("Proveedores", "Alta de proveedores, carga de compras y costos para calcular ganancias por producto.")
@@ -1019,17 +1235,16 @@ def proveedores_page():
 
     st.subheader("📦 Registrar compra a proveedor")
     proveedores = get_provider_names()
-    productos = df["Producto"].tolist() if not df.empty else []
     c1, c2, c3 = st.columns(3)
     with c1:
         prov_compra = st.selectbox("Proveedor de la compra", proveedores)
-        prod_compra = st.selectbox("Producto comprado", productos) if productos else st.text_input("Producto comprado")
+        prod_compra = st.text_input("Producto comprado manual", placeholder="Ej: Harina 0000 Cañuelas / Mozzarella / Jamón")
     with c2:
         cantidad = st.number_input("Cantidad comprada", min_value=0.0, value=1.0, step=1.0)
         unidad = st.selectbox("Unidad", ["kg", "unidad", "bolsa", "caja", "bulto"])
     with c3:
         costo_total = st.number_input("Costo total pagado", min_value=0.0, value=0.0, step=100.0)
-        detalle = st.text_input("Detalle", placeholder="Ej: 300 bolsas 4.0")
+        detalle = st.text_input("Detalle", placeholder="Ej: Molino Cañuelas vendió 300 bolsas 4.0")
     registrar_egreso = st.checkbox("Registrar automáticamente como egreso de caja", value=True)
     if st.button("Guardar compra", use_container_width=True):
         if not str(prod_compra).strip():
@@ -1129,15 +1344,68 @@ def logistica_page():
     st.plotly_chart(styled_fig(px.bar(rutas, x="Ruta", y="Pedidos", color="Estado", title="Pedidos por ruta")), use_container_width=True)
 
 def reportes_page():
-    banner(); header("Reportes", "Resumen comercial de lista, fraccionamiento, categorías, ventas demo y tickets.")
-    df=get_products()
-    resumen = df.groupby("Categoría", as_index=False).agg(Productos=("Producto", "count"), Fraccionables=("Permite fraccionar", lambda x: (x=="Sí").sum()))
-    st.dataframe(resumen, use_container_width=True, hide_index=True)
-    st.plotly_chart(styled_fig(px.bar(resumen.sort_values("Productos", ascending=False).head(12), x="Categoría", y="Productos", title="Top categorías")), use_container_width=True)
+    banner(); header("Reportes", "Facturación diaria, caja, ingresos, egresos, ventas y stock.")
     ventas = load_ventas_df()
+    caja = load_caja_df()
+    ventas_items = load_ventas_items_df()
+    stock_df = load_product_stock_df()
+
+    ventas_hoy = ventas[ventas["Fecha"].apply(is_today)] if not ventas.empty else pd.DataFrame()
+    caja_hoy = caja[caja["Fecha"].apply(is_today)] if not caja.empty else pd.DataFrame()
+
+    venta_dia = float(ventas_hoy["Total"].sum()) if not ventas_hoy.empty else 0.0
+    ingresos_dia = float(caja_hoy[caja_hoy["Tipo"] == "Ingreso"]["Monto"].sum()) if not caja_hoy.empty else 0.0
+    egresos_dia = float(caja_hoy[caja_hoy["Tipo"] == "Egreso"]["Monto"].sum()) if not caja_hoy.empty else 0.0
+    saldo_dia = ingresos_dia - egresos_dia
+
+    c1, c2, c3, c4 = st.columns(4)
+    with c1: st.metric("Venta del día", money(venta_dia))
+    with c2: st.metric("Ingresos del día", money(ingresos_dia))
+    with c3: st.metric("Egresos del día", money(egresos_dia))
+    with c4: st.metric("Saldo de caja del día", money(saldo_dia))
+
+    st.subheader("📅 Facturación diaria")
     if not ventas.empty:
-        st.subheader("Ventas registradas")
-        st.dataframe(ventas[["Fecha","Cliente","Producto","Cantidad","Método de pago","Total $","Ticket"]], use_container_width=True, hide_index=True)
+        tmp = ventas.copy()
+        tmp["Día"] = tmp["Fecha"].apply(lambda x: parse_fecha(x).strftime("%d/%m/%Y") if parse_fecha(x) else "Sin fecha")
+        diario = tmp.groupby("Día", as_index=False).agg(Facturación=("Total", "sum"), Tickets=("Ticket", "count"))
+        diario["Facturación $"] = diario["Facturación"].apply(money)
+        st.dataframe(diario[["Día", "Tickets", "Facturación $"]], use_container_width=True, hide_index=True)
+        st.plotly_chart(styled_fig(px.bar(diario, x="Día", y="Facturación", text_auto=True, title="Facturación por día"), 380), use_container_width=True)
+    else:
+        st.info("Todavía no hay ventas registradas.")
+
+    st.subheader("💰 Caja diaria")
+    if not caja.empty:
+        tmpc = caja.copy()
+        tmpc["Día"] = tmpc["Fecha"].apply(lambda x: parse_fecha(x).strftime("%d/%m/%Y") if parse_fecha(x) else "Sin fecha")
+        diario_caja = tmpc.groupby(["Día", "Tipo"], as_index=False).agg(Monto=("Monto", "sum"))
+        diario_caja["Monto $"] = diario_caja["Monto"].apply(money)
+        st.dataframe(diario_caja[["Día", "Tipo", "Monto $"]], use_container_width=True, hide_index=True)
+        st.plotly_chart(styled_fig(px.bar(diario_caja, x="Día", y="Monto", color="Tipo", barmode="group", title="Ingresos y egresos por día"), 380), use_container_width=True)
+    else:
+        st.info("Todavía no hay movimientos de caja.")
+
+    st.subheader("🧾 Ventas del día")
+    if not ventas_hoy.empty:
+        st.dataframe(ventas_hoy[["Fecha", "Cliente", "Producto", "Cantidad", "Método de pago", "Total $", "Ticket"]], use_container_width=True, hide_index=True)
+    else:
+        st.info("Hoy todavía no hay ventas registradas.")
+
+    st.subheader("📦 Stock real")
+    if not stock_df.empty:
+        st.dataframe(stock_df, use_container_width=True, hide_index=True)
+    else:
+        st.info("Todavía no hay stock real cargado en Productos.")
+
+    st.subheader("👥 Clientes con deuda")
+    resumen_clientes = clientes_facturacion_df()
+    if not resumen_clientes.empty:
+        deuda = resumen_clientes[resumen_clientes["Debe"] > 0]
+        if not deuda.empty:
+            st.dataframe(deuda[["Cliente", "Facturado $", "Pagado $", "Debe $", "Última deuda", "Días deuda", "Alerta"]], use_container_width=True, hide_index=True)
+        else:
+            st.success("No hay clientes con deuda pendiente.")
 
 def config_page():
     banner(); header("Configuración", "Cambiar usuario y contraseña de acceso al sistema.")
