@@ -341,7 +341,7 @@ td{{padding:5px 0;border-bottom:1px dotted #bbb;vertical-align:top;}}
 <a href='javascript:window.print()' class='btn'>Imprimir en HP / Ctrl+P</a>
 <div class='ticket'>
 <h2>DON VALENTIN</h2>
-<h3>Ticket interno</h3>
+<h3>Ticket</h3>
 <div class='line'></div>
 <b>N°:</b> {ticket.get('Número')}<br>
 <b>Fecha:</b> {ticket.get('Fecha')}<br>
@@ -581,13 +581,12 @@ def ticket_page():
         <div class='ticket-line'></div>
         <div style='font-size:22px;font-weight:900;text-align:right;'>TOTAL {money(ticket.get('Total',0))}</div>
         <div class='ticket-line'></div>
-        <div style='text-align:center;font-size:12px;'>Comprobante interno no fiscal.<br>Para factura ARCA se requiere módulo fiscal.</div>
-    </div>
+        
     """, unsafe_allow_html=True)
     html = make_ticket_html(ticket)
     st.download_button("⬇️ Descargar ticket HTML para imprimir", data=html.encode("utf-8"), file_name=f"ticket_{ticket.get('Número','demo')}.html", mime="text/html", use_container_width=True)
     st.markdown('<div class="success-box">🖨️ Impresión real con HP Smart Tank 750: descargá el ticket, abrilo en Chrome/Edge y tocá <b>Imprimir</b> o <b>Ctrl + P</b>. Elegí la impresora HP Smart Tank 750 en Windows.</div>', unsafe_allow_html=True)
-    st.caption("Ticket interno no fiscal. Para factura ARCA se requiere módulo fiscal adicional.")
+    
 
 def clientes_page():
     banner(); header("Clientes", "Alta de clientes, cartera comercial y ejemplo de compras fraccionadas por negocio.")
