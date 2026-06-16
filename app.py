@@ -9,7 +9,7 @@ import base64
 import sqlite3
 import hashlib
 
-st.set_page_config(page_title="DON VALENTIN", page_icon=str(MOZZARELLA_IMG), layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="DON VALENTIN", page_icon="🧀", layout="wide", initial_sidebar_state="expanded")
 
 APP_NAME = "DON VALENTIN"
 DEFAULT_USER = "admin"
