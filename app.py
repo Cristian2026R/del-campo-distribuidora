@@ -9,14 +9,16 @@ import base64
 import sqlite3
 import hashlib
 
-st.set_page_config(page_title="DON VALENTIN", page_icon="🧀", layout="wide", initial_sidebar_state="expanded")
+APP_DIR = Path(__file__).parent
+APP_ICON = APP_DIR / "assets" / "favicon.png"
+st.set_page_config(page_title="DON VALENTIN", page_icon=str(APP_ICON) if APP_ICON.exists() else "🧀", layout="wide", initial_sidebar_state="expanded")
 
 APP_NAME = "DON VALENTIN"
 DEFAULT_USER = "admin"
 DEFAULT_PASS = "admin123"
-AUTH_DB = Path(__file__).parent / "don_valentin_auth.sqlite3"
-DEFAULT_EXCEL = Path(__file__).parent / "lista_don_valentin.xlsx"
-MOZZARELLA_IMG = Path(__file__).parent / "assets" / "mozzarella_hero.png"
+AUTH_DB = APP_DIR / "don_valentin_auth.sqlite3"
+DEFAULT_EXCEL = APP_DIR / "lista_don_valentin.xlsx"
+MOZZARELLA_IMG = APP_DIR / "assets" / "mozzarella_hero.png"
 try:
     MOZZARELLA_B64 = base64.b64encode(MOZZARELLA_IMG.read_bytes()).decode("utf-8") if MOZZARELLA_IMG.exists() else ""
 except Exception:
