@@ -6,12 +6,15 @@ import re
 import io
 from pathlib import Path
 import base64
+import sqlite3
+import hashlib
 
 st.set_page_config(page_title="DON VALENTIN", page_icon="🧀", layout="wide", initial_sidebar_state="expanded")
 
 APP_NAME = "DON VALENTIN"
-DEMO_USER = "demo"
-DEMO_PASS = "demo123"
+DEFAULT_USER = "admin"
+DEFAULT_PASS = "admin123"
+AUTH_DB = Path(__file__).parent / "don_valentin_auth.sqlite3"
 DEFAULT_EXCEL = Path(__file__).parent / "lista_don_valentin.xlsx"
 MOZZARELLA_IMG = Path(__file__).parent / "assets" / "mozzarella_hero.png"
 try:
@@ -21,10 +24,61 @@ except Exception:
 WHATSAPP_LINK = "https://wa.me/TUNUMERO?text=Hola,%20quiero%20solicitar%20acceso%20completo%20a%20DON%20VALENTIN"
 
 # =========================
+# USUARIO Y CONTRASEÑA
+# =========================
+def hash_password(password: str) -> str:
+    return hashlib.sha256(password.encode("utf-8")).hexdigest()
+
+def init_auth_db():
+    conn = sqlite3.connect(AUTH_DB)
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS auth (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            username TEXT NOT NULL,
+            password_hash TEXT NOT NULL
+        )
+    """)
+    cur.execute("SELECT COUNT(*) FROM auth")
+    if cur.fetchone()[0] == 0:
+        cur.execute(
+            "INSERT INTO auth (id, username, password_hash) VALUES (1, ?, ?)",
+            (DEFAULT_USER, hash_password(DEFAULT_PASS))
+        )
+    conn.commit()
+    conn.close()
+
+def get_auth_user():
+    init_auth_db()
+    conn = sqlite3.connect(AUTH_DB)
+    cur = conn.cursor()
+    cur.execute("SELECT username, password_hash FROM auth WHERE id = 1")
+    row = cur.fetchone()
+    conn.close()
+    return row if row else (DEFAULT_USER, hash_password(DEFAULT_PASS))
+
+def verify_login(username: str, password: str) -> bool:
+    saved_user, saved_hash = get_auth_user()
+    return username.strip() == saved_user and hash_password(password) == saved_hash
+
+def update_auth_user(new_username: str, new_password: str):
+    init_auth_db()
+    conn = sqlite3.connect(AUTH_DB)
+    cur = conn.cursor()
+    cur.execute(
+        "UPDATE auth SET username = ?, password_hash = ? WHERE id = 1",
+        (new_username.strip(), hash_password(new_password))
+    )
+    conn.commit()
+    conn.close()
+
+# =========================
 # ESTADO
 # =========================
 if "logged" not in st.session_state:
     st.session_state.logged = False
+if "current_user" not in st.session_state:
+    st.session_state.current_user = ""
 if "page" not in st.session_state:
     st.session_state.page = "Dashboard"
 if "ventas_demo" not in st.session_state:
@@ -260,7 +314,7 @@ def parse_price_excel(file_obj):
                 "Precio unidad": precio_und if precio_und is not None else 0,
                 "Precio kg": precio_kg if precio_kg is not None else 0,
                 "Permite fraccionar": "Sí" if precio_kg is not None or any(w in nombre.lower() for w in ["kg", "gr", "grs", "panceta", "jamon", "paleta", "queso"]) else "No",
-                "Stock": 0 if estado == "Sin stock" else 25 + (len(productos) * 7) % 95,
+                "Stock demo": 0 if estado == "Sin stock" else 25 + (len(productos) * 7) % 95,
                 "Estado": estado
             })
     df = pd.DataFrame(productos).drop_duplicates(subset=["Producto", "Categoría"], keep="first")
@@ -272,7 +326,7 @@ def load_default_products():
         return parse_price_excel(DEFAULT_EXCEL)
     return pd.DataFrame({
         "Código": ["DV-0001"], "Producto": ["Mozzarella X 10kg"], "Categoría": ["Mozzarellas"],
-        "Precio unidad": [65000], "Precio kg": [0], "Permite fraccionar": ["No"], "Stock": [30], "Estado": ["Activo"]
+        "Precio unidad": [65000], "Precio kg": [0], "Permite fraccionar": ["No"], "Stock demo": [30], "Estado": ["Activo"]
     })
 
 def get_products():
@@ -388,11 +442,12 @@ def login():
     c1,c2,c3 = st.columns([1,0.82,1])
     with c2:
         st.markdown('<div class="login-form-wrap">', unsafe_allow_html=True)
-        user=st.text_input("Usuario", value="", placeholder="Usuario", label_visibility="collapsed")
-        pwd=st.text_input("Contraseña", type="password", value="", placeholder="Contraseña", label_visibility="collapsed")
+        user=st.text_input("Usuario", placeholder="Usuario", label_visibility="collapsed")
+        pwd=st.text_input("Contraseña", type="password", placeholder="Contraseña", label_visibility="collapsed")
         if st.button("🔒 Ingresar", use_container_width=True):
-            if user==DEMO_USER and pwd==DEMO_PASS:
+            if verify_login(user, pwd):
                 st.session_state.logged=True
+                st.session_state.current_user=user
                 st.rerun()
             else:
                 st.error("Acceso no autorizado.")
@@ -439,7 +494,7 @@ def dashboard():
     with col2:
         status = df.groupby("Estado", as_index=False).size().rename(columns={"size":"Cantidad"})
         st.plotly_chart(styled_fig(px.pie(status, names="Estado", values="Cantidad", hole=.55, title="Estado de lista"), 420), use_container_width=True)
-    st.markdown('<div class="success-box">💡 Precios visibles con $, descarga de lista formateada, venta fraccionada y ticket simple imprimible. Ticket listo para imprimir.</div>', unsafe_allow_html=True)
+    st.markdown('<div class="success-box">💡 Precios visibles con $, descarga de lista formateada, venta fraccionada y ticket simple imprimible.</div>', unsafe_allow_html=True)
 
 def lista_precios():
     banner(); header("Lista de precios", "Subida de Excel de productos y precios para actualizar el catálogo comercial.")
@@ -542,9 +597,9 @@ def venta_fraccionada():
             ventas = pd.DataFrame(st.session_state.ventas_demo)
         else:
             ventas = pd.DataFrame([
-                {"Fecha":"Hoy 09:20","Cliente":"Pizzería La Esquina","Producto":"Mozzarella Doña Emilse X10Kg","Modo":"Por gramos","Cantidad":"500 g","Total":3250,"Total $":money(3250),"Método de pago":"Efectivo","Ticket":"T-0001"},
-                {"Fecha":"Hoy 10:05","Cliente":"Rotisería Avenida","Producto":"Panceta Luvianka Ahumada","Modo":"Por gramos","Cantidad":"300 g","Total":3300,"Total $":money(3300),"Método de pago":"Transferencia","Ticket":"T-0002"},
-                {"Fecha":"Hoy 11:12","Cliente":"Almacén Don Luis","Producto":"Aceituna Verde 1 X5Kg Garrafa","Modo":"Por unidad","Cantidad":"1 u.","Total":24000,"Total $":money(24000),"Método de pago":"Mercado Pago","Ticket":"T-0003"},
+                {"Fecha":"Hoy 09:20","Cliente":"Pizzería La Esquina","Producto":"Mozzarella Doña Emilse X10Kg","Modo":"Por gramos","Cantidad":"500 g","Total":3250,"Total $":money(3250),"Método de pago":"Efectivo","Ticket":"T-DEMO1"},
+                {"Fecha":"Hoy 10:05","Cliente":"Rotisería Avenida","Producto":"Panceta Luvianka Ahumada","Modo":"Por gramos","Cantidad":"300 g","Total":3300,"Total $":money(3300),"Método de pago":"Transferencia","Ticket":"T-DEMO2"},
+                {"Fecha":"Hoy 11:12","Cliente":"Almacén Don Luis","Producto":"Aceituna Verde 1 X5Kg Garrafa","Modo":"Por unidad","Cantidad":"1 u.","Total":24000,"Total $":money(24000),"Método de pago":"Mercado Pago","Ticket":"T-DEMO3"},
             ])
         show_cols = [c for c in ["Fecha","Cliente","Producto","Cantidad","Método de pago","Total $","Ticket"] if c in ventas.columns]
         st.dataframe(ventas[show_cols], use_container_width=True, hide_index=True)
@@ -552,12 +607,12 @@ def venta_fraccionada():
         st.metric("Total aplicado", money(total_dia))
 
 def ticket_page():
-    banner(); header("Ticket / Cobro", "Vista previa de ticket interno, listo para imprimir en HP Smart Tank 750 desde el navegador.")
+    banner(); header("Ticket / Cobro", "Vista previa de ticket listo para imprimir en HP Smart Tank 750 desde el navegador.")
     ticket = st.session_state.get("last_ticket")
     if ticket is None:
         st.info("Todavía no generaste un ticket. Entrá en Venta fraccionada, aplicá una compra y se generará acá.")
         ticket = {
-            "Número":"T-0000",
+            "Número":"T-DEMO",
             "Fecha":datetime.now().strftime("%d/%m/%Y %H:%M"),
             "Cliente":"Cliente",
             "Método de pago":"Efectivo",
@@ -653,15 +708,34 @@ def reportes_page():
         st.dataframe(ventas[["Fecha","Cliente","Producto","Cantidad","Método de pago","Total $","Ticket"]], use_container_width=True, hide_index=True)
 
 def config_page():
-    banner(); header("Configuración", "Personalización general del sistema.")
-    st.text_input("Nombre de la app", value="DON VALENTIN")
-    st.selectbox("Tema visual", ["Negro con retoques dorados"])
-    st.checkbox("Permitir carga de Excel", value=True)
-    st.checkbox("Mostrar precios con signo $", value=True)
-    st.checkbox("Permitir venta fraccionada por gramos", value=True)
-    st.checkbox("Generar ticket simple", value=True)
-    st.checkbox("Activar logística", value=True)
-    st.button("Guardar configuración", use_container_width=True)
+    banner(); header("Configuración", "Cambiar usuario y contraseña de acceso al sistema.")
+    saved_user, _ = get_auth_user()
+
+    st.markdown('<div class="card"><b>👤 Usuario actual:</b> ' + saved_user + '<br><br>Desde esta pantalla se puede cambiar el usuario y la contraseña de acceso. Guardá estos datos en un lugar seguro.</div>', unsafe_allow_html=True)
+
+    c1, c2 = st.columns(2)
+    with c1:
+        nuevo_usuario = st.text_input("Nuevo usuario", value=saved_user)
+        clave_actual = st.text_input("Contraseña actual", type="password")
+    with c2:
+        nueva_clave = st.text_input("Nueva contraseña", type="password")
+        confirmar_clave = st.text_input("Confirmar nueva contraseña", type="password")
+
+    if st.button("Guardar usuario y contraseña", use_container_width=True):
+        if not clave_actual:
+            st.warning("Ingresá la contraseña actual.")
+        elif not verify_login(saved_user, clave_actual):
+            st.error("La contraseña actual no es correcta.")
+        elif not nuevo_usuario.strip():
+            st.warning("El usuario no puede quedar vacío.")
+        elif len(nueva_clave) < 4:
+            st.warning("La nueva contraseña debe tener al menos 4 caracteres.")
+        elif nueva_clave != confirmar_clave:
+            st.error("La nueva contraseña y la confirmación no coinciden.")
+        else:
+            update_auth_user(nuevo_usuario.strip(), nueva_clave)
+            st.session_state.current_user = nuevo_usuario.strip()
+            st.success("Usuario y contraseña actualizados correctamente. La próxima vez se ingresa con los nuevos datos.")
 
 if not st.session_state.logged:
     login()
