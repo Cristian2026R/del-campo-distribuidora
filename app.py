@@ -9,16 +9,15 @@ import base64
 import sqlite3
 import hashlib
 
-APP_DIR = Path(__file__).parent
-APP_ICON = APP_DIR / "assets" / "favicon.png"
-st.set_page_config(page_title="DON VALENTIN", page_icon=str(APP_ICON) if APP_ICON.exists() else "🧀", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="DON VALENTIN", page_icon="🧀", layout="wide", initial_sidebar_state="expanded")
 
 APP_NAME = "DON VALENTIN"
 DEFAULT_USER = "admin"
 DEFAULT_PASS = "admin123"
-AUTH_DB = APP_DIR / "don_valentin_auth.sqlite3"
-DEFAULT_EXCEL = APP_DIR / "lista_don_valentin.xlsx"
-MOZZARELLA_IMG = APP_DIR / "assets" / "mozzarella_hero.png"
+AUTH_DB = Path(__file__).parent / "don_valentin_auth.sqlite3"
+APP_DB = Path(__file__).parent / "don_valentin_data.sqlite3"
+DEFAULT_EXCEL = Path(__file__).parent / "lista_don_valentin.xlsx"
+MOZZARELLA_IMG = Path(__file__).parent / "assets" / "mozzarella_hero.png"
 try:
     MOZZARELLA_B64 = base64.b64encode(MOZZARELLA_IMG.read_bytes()).decode("utf-8") if MOZZARELLA_IMG.exists() else ""
 except Exception:
@@ -74,6 +73,109 @@ def update_auth_user(new_username: str, new_password: str):
     conn.commit()
     conn.close()
 
+
+# =========================
+# BASE DE DATOS REAL: CLIENTES Y VENTAS
+# =========================
+def get_data_conn():
+    return sqlite3.connect(APP_DB)
+
+def init_data_db():
+    conn = get_data_conn()
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS clientes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cliente TEXT NOT NULL UNIQUE,
+            tipo TEXT DEFAULT '',
+            zona TEXT DEFAULT '',
+            telefono TEXT DEFAULT '',
+            estado TEXT DEFAULT 'Activo',
+            observaciones TEXT DEFAULT '',
+            creado_en TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS ventas (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            fecha TEXT NOT NULL,
+            cliente TEXT NOT NULL,
+            producto TEXT NOT NULL,
+            modo TEXT NOT NULL,
+            cantidad TEXT NOT NULL,
+            total REAL NOT NULL,
+            metodo_pago TEXT NOT NULL,
+            ticket TEXT NOT NULL UNIQUE,
+            creado_en TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    defaults = [
+        ("Pizzería La Esquina", "Pizzería", "Centro", "11 2345-6789", "Activo", ""),
+        ("Rotisería Avenida", "Rotisería", "Norte", "11 3456-7890", "Activo", ""),
+        ("Almacén Don Luis", "Almacén", "Oeste", "11 4567-8901", "Activo", ""),
+        ("Casa de Comidas Norte", "Comidas", "Norte", "11 5678-9012", "Activo", ""),
+        ("Panadería Centro", "Panadería", "Centro", "11 6789-0123", "Activo", ""),
+    ]
+    for row in defaults:
+        cur.execute("""
+            INSERT OR IGNORE INTO clientes (cliente, tipo, zona, telefono, estado, observaciones)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, row)
+    conn.commit()
+    conn.close()
+
+def load_clientes_df():
+    init_data_db()
+    conn = get_data_conn()
+    df = pd.read_sql_query(
+        "SELECT cliente AS Cliente, tipo AS Tipo, zona AS Zona, telefono AS Teléfono, estado AS Estado, observaciones AS Observaciones FROM clientes ORDER BY cliente",
+        conn
+    )
+    conn.close()
+    return df
+
+def get_client_names():
+    df = load_clientes_df()
+    if df.empty:
+        return ["Cliente"]
+    return df["Cliente"].dropna().astype(str).tolist()
+
+def add_cliente_db(cliente, tipo, zona, telefono, estado, observaciones):
+    init_data_db()
+    conn = get_data_conn()
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT OR REPLACE INTO clientes (cliente, tipo, zona, telefono, estado, observaciones)
+        VALUES (?, ?, ?, ?, ?, ?)
+    """, (cliente.strip(), tipo, zona.strip() or "Sin zona", telefono.strip() or "-", estado, observaciones.strip() if observaciones else ""))
+    conn.commit()
+    conn.close()
+
+def save_venta_db(venta):
+    init_data_db()
+    conn = get_data_conn()
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT OR REPLACE INTO ventas (fecha, cliente, producto, modo, cantidad, total, metodo_pago, ticket)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    """, (venta["Fecha"], venta["Cliente"], venta["Producto"], venta["Modo"], venta["Cantidad"], float(venta["Total"]), venta["Método de pago"], venta["Ticket"]))
+    conn.commit()
+    conn.close()
+
+def load_ventas_df():
+    init_data_db()
+    conn = get_data_conn()
+    df = pd.read_sql_query(
+        "SELECT fecha AS Fecha, cliente AS Cliente, producto AS Producto, modo AS Modo, cantidad AS Cantidad, total AS Total, metodo_pago AS 'Método de pago', ticket AS Ticket FROM ventas ORDER BY id DESC",
+        conn
+    )
+    conn.close()
+    if not df.empty:
+        df["Total $"] = df["Total"].apply(money)
+    return df
+
+init_data_db()
+
 # =========================
 # ESTADO
 # =========================
@@ -88,9 +190,7 @@ if "ventas_demo" not in st.session_state:
 if "last_ticket" not in st.session_state:
     st.session_state.last_ticket = None
 if "clientes_demo" not in st.session_state:
-    st.session_state.clientes_demo = [
-        "Pizzería La Esquina", "Rotisería Avenida", "Almacén Don Luis", "Casa de Comidas Norte", "Panadería Centro"
-    ]
+    st.session_state.clientes_demo = get_client_names()
 
 # =========================
 # ESTILO NEGRO + DORADO
@@ -480,7 +580,7 @@ def sidebar():
 def dashboard():
     banner()
     df = get_products()
-    header("DON VALENTIN", "Sistema comercial para visualizar precios, productos, ventas por gramos, cobro y ticket simple.")
+    header("DON VALENTIN", "Sistema comercial con clientes y ventas guardadas para uso diario.")
     activos = int((df["Estado"] == "Activo").sum()) if not df.empty else 0
     fracc = int((df["Permite fraccionar"] == "Sí").sum()) if not df.empty else 0
     valor_lista = df[["Precio unidad", "Precio kg"]].max(axis=1).sum() if not df.empty else 0
@@ -547,7 +647,7 @@ def venta_fraccionada():
     col1,col2=st.columns([1,1])
     with col1:
         st.subheader("⚖️ Nueva venta / simulador")
-        cliente = st.selectbox("Cliente", st.session_state.clientes_demo)
+        cliente = st.selectbox("Cliente", get_client_names())
         productos_lista = df["Producto"].tolist()
         prod = st.selectbox("Producto", productos_lista)
         row = df[df["Producto"] == prod].iloc[0]
@@ -582,6 +682,7 @@ def venta_fraccionada():
                 "Ticket": numero,
             }
             st.session_state.ventas_demo.append(venta)
+            save_venta_db(venta)
             st.session_state.last_ticket = {
                 "Número": numero,
                 "Fecha": venta["Fecha"],
@@ -595,9 +696,8 @@ def venta_fraccionada():
             st.rerun()
     with col2:
         st.subheader("📋 Últimas compras aplicadas")
-        if st.session_state.ventas_demo:
-            ventas = pd.DataFrame(st.session_state.ventas_demo)
-        else:
+        ventas = load_ventas_df()
+        if ventas.empty:
             ventas = pd.DataFrame([
                 {"Fecha":"Hoy 09:20","Cliente":"Pizzería La Esquina","Producto":"Mozzarella Doña Emilse X10Kg","Modo":"Por gramos","Cantidad":"500 g","Total":3250,"Total $":money(3250),"Método de pago":"Efectivo","Ticket":"T-DEMO1"},
                 {"Fecha":"Hoy 10:05","Cliente":"Rotisería Avenida","Producto":"Panceta Luvianka Ahumada","Modo":"Por gramos","Cantidad":"300 g","Total":3300,"Total $":money(3300),"Método de pago":"Transferencia","Ticket":"T-DEMO2"},
@@ -643,19 +743,10 @@ def ticket_page():
     st.markdown('<div class="success-box">🖨️ Impresión real con HP Smart Tank 750: descargá el ticket, abrilo en Chrome/Edge y tocá <b>Imprimir</b> o <b>Ctrl + P</b>. Elegí la impresora HP Smart Tank 750 en Windows.</div>', unsafe_allow_html=True)
 
 def clientes_page():
-    banner(); header("Clientes", "Alta de clientes, cartera comercial y ejemplo de compras fraccionadas por negocio.")
-
-    if "clientes_registros" not in st.session_state:
-        st.session_state.clientes_registros = [
-            {"Cliente":"Pizzería La Esquina", "Tipo":"Pizzería", "Zona":"Centro", "Teléfono":"11 2345-6789", "Estado":"Activo"},
-            {"Cliente":"Rotisería Avenida", "Tipo":"Rotisería", "Zona":"Norte", "Teléfono":"11 3456-7890", "Estado":"Activo"},
-            {"Cliente":"Almacén Don Luis", "Tipo":"Almacén", "Zona":"Oeste", "Teléfono":"11 4567-8901", "Estado":"Activo"},
-            {"Cliente":"Casa de Comidas Norte", "Tipo":"Comidas", "Zona":"Norte", "Teléfono":"11 5678-9012", "Estado":"Activo"},
-            {"Cliente":"Panadería Centro", "Tipo":"Panadería", "Zona":"Centro", "Teléfono":"11 6789-0123", "Estado":"Activo"},
-        ]
+    banner(); header("Clientes", "Alta de clientes y cartera comercial guardada de forma permanente.")
 
     st.subheader("➕ Cargar cliente nuevo")
-    st.markdown('<div class="card">Formulario para dar de alta compradores, comercios o cuentas corrientes.</div>', unsafe_allow_html=True)
+    st.markdown('<div class="card">Formulario para dar de alta compradores, comercios o cuentas corrientes. Los clientes quedan guardados en la base de datos.</div>', unsafe_allow_html=True)
 
     c1, c2, c3 = st.columns(3)
     with c1:
@@ -666,30 +757,23 @@ def clientes_page():
         zona = st.text_input("Zona / Localidad", placeholder="Ej: Centro")
     with c3:
         estado = st.selectbox("Estado", ["Activo", "Inactivo", "Cuenta corriente"])
-        st.text_area("Observaciones", placeholder="Ej: compra mozzarella por semana")
+        observaciones = st.text_area("Observaciones", placeholder="Ej: compra mozzarella por semana")
 
     if st.button("Guardar cliente", use_container_width=True):
         if nuevo_cliente.strip():
-            st.session_state.clientes_registros.append({
-                "Cliente": nuevo_cliente.strip(),
-                "Tipo": tipo,
-                "Zona": zona.strip() or "Sin zona",
-                "Teléfono": telefono.strip() or "-",
-                "Estado": estado,
-            })
-            if nuevo_cliente.strip() not in st.session_state.clientes_demo:
-                st.session_state.clientes_demo.append(nuevo_cliente.strip())
-            st.success("Cliente cargado correctamente.")
+            add_cliente_db(nuevo_cliente.strip(), tipo, zona, telefono, estado, observaciones)
+            st.session_state.clientes_demo = get_client_names()
+            st.success("Cliente guardado correctamente en la base de datos.")
         else:
             st.warning("Ingresá el nombre del cliente.")
 
-    st.subheader("👥 Clientes cargados")
-    clientes = pd.DataFrame(st.session_state.clientes_registros)
+    st.subheader("👥 Clientes guardados")
+    clientes = load_clientes_df()
     st.dataframe(clientes, use_container_width=True, hide_index=True)
 
     st.subheader("📊 Vista comercial")
-    resumen = clientes.groupby("Tipo", as_index=False).size().rename(columns={"size":"Cantidad"})
-    if not resumen.empty:
+    if not clientes.empty:
+        resumen = clientes.groupby("Tipo", as_index=False).size().rename(columns={"size":"Cantidad"})
         st.plotly_chart(styled_fig(px.bar(resumen, x="Tipo", y="Cantidad", text_auto=True, title="Clientes por tipo de negocio"), 360), use_container_width=True)
 
 def logistica_page():
@@ -704,8 +788,8 @@ def reportes_page():
     resumen = df.groupby("Categoría", as_index=False).agg(Productos=("Producto", "count"), Fraccionables=("Permite fraccionar", lambda x: (x=="Sí").sum()))
     st.dataframe(resumen, use_container_width=True, hide_index=True)
     st.plotly_chart(styled_fig(px.bar(resumen.sort_values("Productos", ascending=False).head(12), x="Categoría", y="Productos", title="Top categorías")), use_container_width=True)
-    if st.session_state.ventas_demo:
-        ventas = pd.DataFrame(st.session_state.ventas_demo)
+    ventas = load_ventas_df()
+    if not ventas.empty:
         st.subheader("Ventas registradas")
         st.dataframe(ventas[["Fecha","Cliente","Producto","Cantidad","Método de pago","Total $","Ticket"]], use_container_width=True, hide_index=True)
 
