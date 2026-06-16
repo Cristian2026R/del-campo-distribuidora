@@ -109,6 +109,59 @@ def init_data_db():
             creado_en TEXT DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS ventas_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ticket TEXT NOT NULL,
+            fecha TEXT NOT NULL,
+            cliente TEXT NOT NULL,
+            producto TEXT NOT NULL,
+            modo TEXT NOT NULL,
+            cantidad_texto TEXT NOT NULL,
+            gramos REAL DEFAULT 0,
+            unidades REAL DEFAULT 0,
+            cantidad_base REAL DEFAULT 0,
+            total REAL NOT NULL,
+            metodo_pago TEXT NOT NULL,
+            creado_en TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS proveedores (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            proveedor TEXT NOT NULL UNIQUE,
+            telefono TEXT DEFAULT '',
+            zona TEXT DEFAULT '',
+            observaciones TEXT DEFAULT '',
+            creado_en TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS compras (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            fecha TEXT NOT NULL,
+            proveedor TEXT NOT NULL,
+            producto TEXT NOT NULL,
+            cantidad REAL NOT NULL,
+            unidad TEXT NOT NULL,
+            costo_total REAL NOT NULL,
+            costo_unitario REAL NOT NULL,
+            detalle TEXT DEFAULT '',
+            creado_en TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS movimientos_caja (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            fecha TEXT NOT NULL,
+            tipo TEXT NOT NULL,
+            concepto TEXT NOT NULL,
+            monto REAL NOT NULL,
+            medio TEXT DEFAULT '',
+            observaciones TEXT DEFAULT '',
+            creado_en TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
     defaults = [
         ("Pizzería La Esquina", "Pizzería", "Centro", "11 2345-6789", "Activo", ""),
         ("Rotisería Avenida", "Rotisería", "Norte", "11 3456-7890", "Activo", ""),
@@ -174,6 +227,119 @@ def load_ventas_df():
         df["Total $"] = df["Total"].apply(money)
     return df
 
+def save_venta_item_db(item):
+    init_data_db()
+    conn = get_data_conn()
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO ventas_items (ticket, fecha, cliente, producto, modo, cantidad_texto, gramos, unidades, cantidad_base, total, metodo_pago)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        item["Ticket"], item["Fecha"], item["Cliente"], item["Producto"], item["Modo"], item["Cantidad"],
+        float(item.get("Gramos", 0) or 0), float(item.get("Unidades", 0) or 0), float(item.get("Cantidad base", 0) or 0),
+        float(item["Total"]), item["Método de pago"]
+    ))
+    conn.commit()
+    conn.close()
+
+def load_ventas_items_df():
+    init_data_db()
+    conn = get_data_conn()
+    df = pd.read_sql_query("""
+        SELECT fecha AS Fecha, cliente AS Cliente, producto AS Producto, modo AS Modo, cantidad_texto AS Cantidad,
+               gramos AS Gramos, unidades AS Unidades, cantidad_base AS 'Cantidad base', total AS Total,
+               metodo_pago AS 'Método de pago', ticket AS Ticket
+        FROM ventas_items ORDER BY id DESC
+    """, conn)
+    conn.close()
+    if not df.empty:
+        df["Total $"] = df["Total"].apply(money)
+    return df
+
+def add_proveedor_db(proveedor, telefono, zona, observaciones):
+    init_data_db()
+    conn = get_data_conn()
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT OR REPLACE INTO proveedores (proveedor, telefono, zona, observaciones)
+        VALUES (?, ?, ?, ?)
+    """, (proveedor.strip(), telefono.strip() or "-", zona.strip() or "Sin zona", observaciones.strip() if observaciones else ""))
+    conn.commit()
+    conn.close()
+
+def load_proveedores_df():
+    init_data_db()
+    conn = get_data_conn()
+    df = pd.read_sql_query("SELECT proveedor AS Proveedor, telefono AS Teléfono, zona AS Zona, observaciones AS Observaciones FROM proveedores ORDER BY proveedor", conn)
+    conn.close()
+    return df
+
+def get_provider_names():
+    df = load_proveedores_df()
+    return df["Proveedor"].dropna().astype(str).tolist() if not df.empty else ["Molino Cañuelas"]
+
+def save_compra_db(fecha, proveedor, producto, cantidad, unidad, costo_total, detalle):
+    cantidad = float(cantidad or 0)
+    costo_total = float(costo_total or 0)
+    costo_unitario = costo_total / cantidad if cantidad else 0
+    init_data_db()
+    conn = get_data_conn()
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO compras (fecha, proveedor, producto, cantidad, unidad, costo_total, costo_unitario, detalle)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    """, (fecha, proveedor, producto, cantidad, unidad, costo_total, costo_unitario, detalle or ""))
+    conn.commit()
+    conn.close()
+
+def load_compras_df():
+    init_data_db()
+    conn = get_data_conn()
+    df = pd.read_sql_query("""
+        SELECT fecha AS Fecha, proveedor AS Proveedor, producto AS Producto, cantidad AS Cantidad, unidad AS Unidad,
+               costo_total AS 'Costo total', costo_unitario AS 'Costo unitario', detalle AS Detalle
+        FROM compras ORDER BY id DESC
+    """, conn)
+    conn.close()
+    if not df.empty:
+        df["Costo total $"] = df["Costo total"].apply(money)
+        df["Costo unitario $"] = df["Costo unitario"].apply(money)
+    return df
+
+def save_movimiento_caja(fecha, tipo, concepto, monto, medio, observaciones):
+    init_data_db()
+    conn = get_data_conn()
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO movimientos_caja (fecha, tipo, concepto, monto, medio, observaciones)
+        VALUES (?, ?, ?, ?, ?, ?)
+    """, (fecha, tipo, concepto, float(monto or 0), medio, observaciones or ""))
+    conn.commit()
+    conn.close()
+
+def load_caja_df():
+    init_data_db()
+    conn = get_data_conn()
+    df = pd.read_sql_query("""
+        SELECT fecha AS Fecha, tipo AS Tipo, concepto AS Concepto, monto AS Monto, medio AS Medio, observaciones AS Observaciones
+        FROM movimientos_caja ORDER BY id DESC
+    """, conn)
+    conn.close()
+    if not df.empty:
+        df["Monto $"] = df["Monto"].apply(money)
+    return df
+
+def costo_promedio_por_producto():
+    compras = load_compras_df()
+    if compras.empty:
+        return {}
+    costos = {}
+    for producto, g in compras.groupby("Producto"):
+        total_costo = g["Costo total"].sum()
+        total_cantidad = g["Cantidad"].sum()
+        costos[producto] = total_costo / total_cantidad if total_cantidad else 0
+    return costos
+
 init_data_db()
 
 # =========================
@@ -189,6 +355,8 @@ if "ventas_demo" not in st.session_state:
     st.session_state.ventas_demo = []
 if "last_ticket" not in st.session_state:
     st.session_state.last_ticket = None
+if "venta_cart" not in st.session_state:
+    st.session_state.venta_cart = []
 if "clientes_demo" not in st.session_state:
     st.session_state.clientes_demo = get_client_names()
 
@@ -561,8 +729,8 @@ def sidebar():
         st.markdown("**DISTRIBUIDORA**")
         st.caption("Sistema comercial premium")
         st.markdown("---")
-        pages=["Dashboard","Lista de precios","Productos","Venta fraccionada","Ticket / Cobro","Clientes","Logística","Reportes","Configuración"]
-        icons={"Dashboard":"📊","Lista de precios":"📄","Productos":"📦","Venta fraccionada":"⚖️","Ticket / Cobro":"🧾","Clientes":"👥","Logística":"🚚","Reportes":"📑","Configuración":"⚙️"}
+        pages=["Dashboard","Lista de precios","Productos","Venta fraccionada","Ticket / Cobro","Clientes","Proveedores","Caja","Ganancias","Logística","Reportes","Configuración"]
+        icons={"Dashboard":"📊","Lista de precios":"📄","Productos":"📦","Venta fraccionada":"⚖️","Ticket / Cobro":"🧾","Clientes":"👥","Proveedores":"🏭","Caja":"💰","Ganancias":"📈","Logística":"🚚","Reportes":"📑","Configuración":"⚙️"}
         for p in pages:
             if st.button(f"{icons[p]} {p}", use_container_width=True):
                 st.session_state.page=p
@@ -639,74 +807,127 @@ def productos_page():
     st.button("Guardar producto", use_container_width=True)
 
 def venta_fraccionada():
-    banner(); header("Venta fraccionada", "Carga visual de compras por unidad o por fracción: desde 100 gramos hasta 50 kilos.")
+    banner(); header("Venta fraccionada", "Venta con peso exacto manual y múltiples productos en un mismo ticket.")
     df = get_products()
     if df.empty:
         st.warning("No hay productos cargados.")
         return
-    col1,col2=st.columns([1,1])
+
+    st.subheader("🛒 Armar ticket con varios productos")
+    col1, col2 = st.columns([1, 1])
+
     with col1:
-        st.subheader("⚖️ Nueva venta / simulador")
         cliente = st.selectbox("Cliente", get_client_names())
+        metodo = st.selectbox("Método de pago", ["Efectivo", "Transferencia", "Mercado Pago", "Cuenta corriente"])
         productos_lista = df["Producto"].tolist()
         prod = st.selectbox("Producto", productos_lista)
         row = df[df["Producto"] == prod].iloc[0]
         modo = st.radio("Modo de venta", ["Por gramos", "Por unidad"], horizontal=True)
-        grams = 0
-        units = 1
+
+        grams = 0.0
+        units = 1.0
         if modo == "Por gramos":
-            grams = st.selectbox(
-                "Cantidad / fracción",
-                [100, 200, 300, 400, 500, 600, 700, 800, 900,
-                 1000, 1500, 2000, 2500, 3000, 4000, 5000,
-                 10000, 15000, 20000, 25000, 30000, 40000, 50000],
-                format_func=lambda x: f"{x} g" if x < 1000 else f"{x/1000:g} kg"
+            grams = st.number_input(
+                "Peso exacto en gramos",
+                min_value=1.0,
+                max_value=50000.0,
+                value=100.0,
+                step=1.0,
+                help="Ejemplos: 305, 505, 510, 1000, 25000, 50000."
             )
+            cantidad_txt = f"{grams:g} g" if grams < 1000 else f"{grams/1000:g} kg"
+            cantidad_base = grams / 1000
         else:
-            units = st.number_input("Unidades", min_value=1, value=1, step=1)
-        metodo = st.selectbox("Método de pago", ["Efectivo", "Transferencia", "Mercado Pago", "Cuenta corriente"])
+            units = st.number_input("Unidades", min_value=1.0, value=1.0, step=1.0)
+            cantidad_txt = f"{units:g} u."
+            cantidad_base = units
+
         total = price_for_sale(row, grams, units)
-        st.markdown(f'<div class="card"><div class="kpi-label">Total estimado</div><div class="kpi-value">{money(total)}</div><div class="kpi-note">Producto: {prod}</div></div>', unsafe_allow_html=True)
-        st.caption("Al confirmar, la app te lleva automáticamente al módulo 🧾 Ticket / Cobro para ver la vista previa antes de imprimir.")
-        if st.button("Aplicar compra y generar ticket", use_container_width=True):
-            numero = "T-" + datetime.now().strftime("%Y%m%d%H%M%S")
-            venta = {
-                "Fecha": datetime.now().strftime("%d/%m/%Y %H:%M"),
-                "Cliente": cliente,
+        st.markdown(f'<div class="card"><div class="kpi-label">Subtotal del producto</div><div class="kpi-value">{money(total)}</div><div class="kpi-note">{prod} · {cantidad_txt}</div></div>', unsafe_allow_html=True)
+
+        if st.button("➕ Agregar producto al ticket", use_container_width=True):
+            st.session_state.venta_cart.append({
                 "Producto": prod,
                 "Modo": modo,
-                "Cantidad": f"{grams} g" if modo == "Por gramos" else f"{units} u.",
-                "Total": round(total, 2),
+                "Cantidad": cantidad_txt,
+                "Gramos": float(grams or 0),
+                "Unidades": float(units if modo == "Por unidad" else 0),
+                "Cantidad base": float(cantidad_base or 0),
+                "Total": round(float(total), 2),
                 "Total $": money(total),
-                "Método de pago": metodo,
-                "Ticket": numero,
-            }
-            st.session_state.ventas_demo.append(venta)
-            save_venta_db(venta)
-            st.session_state.last_ticket = {
-                "Número": numero,
-                "Fecha": venta["Fecha"],
-                "Cliente": cliente,
-                "Método de pago": metodo,
-                "Items": [venta],
-                "Total": round(total, 2),
-            }
-            st.success("Compra aplicada y ticket generado.")
-            st.session_state.page = "Ticket / Cobro"
+            })
+            st.success("Producto agregado al ticket.")
             st.rerun()
+
     with col2:
-        st.subheader("📋 Últimas compras aplicadas")
-        ventas = load_ventas_df()
-        if ventas.empty:
-            ventas = pd.DataFrame([
-                {"Fecha":"Hoy 09:20","Cliente":"Pizzería La Esquina","Producto":"Mozzarella Doña Emilse X10Kg","Modo":"Por gramos","Cantidad":"500 g","Total":3250,"Total $":money(3250),"Método de pago":"Efectivo","Ticket":"T-DEMO1"},
-                {"Fecha":"Hoy 10:05","Cliente":"Rotisería Avenida","Producto":"Panceta Luvianka Ahumada","Modo":"Por gramos","Cantidad":"300 g","Total":3300,"Total $":money(3300),"Método de pago":"Transferencia","Ticket":"T-DEMO2"},
-                {"Fecha":"Hoy 11:12","Cliente":"Almacén Don Luis","Producto":"Aceituna Verde 1 X5Kg Garrafa","Modo":"Por unidad","Cantidad":"1 u.","Total":24000,"Total $":money(24000),"Método de pago":"Mercado Pago","Ticket":"T-DEMO3"},
-            ])
+        st.subheader("🧾 Productos del ticket")
+        if st.session_state.venta_cart:
+            cart_df = pd.DataFrame(st.session_state.venta_cart)
+            st.dataframe(cart_df[["Producto", "Cantidad", "Total $"]], use_container_width=True, hide_index=True)
+            total_ticket = sum(float(i.get("Total", 0)) for i in st.session_state.venta_cart)
+            st.metric("Total del ticket", money(total_ticket))
+            c1, c2 = st.columns(2)
+            with c1:
+                if st.button("🗑️ Vaciar ticket", use_container_width=True):
+                    st.session_state.venta_cart = []
+                    st.rerun()
+            with c2:
+                if st.button("✅ Confirmar venta y generar ticket", use_container_width=True):
+                    numero = "T-" + datetime.now().strftime("%Y%m%d%H%M%S")
+                    fecha = datetime.now().strftime("%d/%m/%Y %H:%M")
+                    total_ticket = round(sum(float(i.get("Total", 0)) for i in st.session_state.venta_cart), 2)
+                    resumen = {
+                        "Fecha": fecha,
+                        "Cliente": cliente,
+                        "Producto": f"{len(st.session_state.venta_cart)} productos",
+                        "Modo": "Ticket múltiple",
+                        "Cantidad": "Varios",
+                        "Total": total_ticket,
+                        "Total $": money(total_ticket),
+                        "Método de pago": metodo,
+                        "Ticket": numero,
+                    }
+                    save_venta_db(resumen)
+                    items = []
+                    for item in st.session_state.venta_cart:
+                        venta_item = {
+                            "Fecha": fecha,
+                            "Cliente": cliente,
+                            "Producto": item["Producto"],
+                            "Modo": item["Modo"],
+                            "Cantidad": item["Cantidad"],
+                            "Gramos": item.get("Gramos", 0),
+                            "Unidades": item.get("Unidades", 0),
+                            "Cantidad base": item.get("Cantidad base", 0),
+                            "Total": item["Total"],
+                            "Total $": money(item["Total"]),
+                            "Método de pago": metodo,
+                            "Ticket": numero,
+                        }
+                        save_venta_item_db(venta_item)
+                        items.append(venta_item)
+                    save_movimiento_caja(fecha, "Ingreso", f"Venta ticket {numero} - {cliente}", total_ticket, metodo, "Venta generada desde venta fraccionada")
+                    st.session_state.last_ticket = {
+                        "Número": numero,
+                        "Fecha": fecha,
+                        "Cliente": cliente,
+                        "Método de pago": metodo,
+                        "Items": items,
+                        "Total": total_ticket,
+                    }
+                    st.session_state.venta_cart = []
+                    st.success("Venta guardada, caja actualizada y ticket generado.")
+                    st.session_state.page = "Ticket / Cobro"
+                    st.rerun()
+        else:
+            st.info("Todavía no agregaste productos. Podés cargar mozzarella, jamón, harina y todos los productos que necesites en el mismo ticket.")
+
+    st.subheader("📋 Últimas ventas guardadas")
+    ventas = load_ventas_df()
+    if not ventas.empty:
         show_cols = [c for c in ["Fecha","Cliente","Producto","Cantidad","Método de pago","Total $","Ticket"] if c in ventas.columns]
         st.dataframe(ventas[show_cols], use_container_width=True, hide_index=True)
-        total_dia = ventas["Total"].sum() if "Total" in ventas else 0
-        st.metric("Total aplicado", money(total_dia))
+        st.metric("Total vendido", money(ventas["Total"].sum()))
 
 def ticket_page():
     banner(); header("Ticket / Cobro", "Vista previa de ticket listo para imprimir en HP Smart Tank 750 desde el navegador.")
@@ -776,6 +997,131 @@ def clientes_page():
         resumen = clientes.groupby("Tipo", as_index=False).size().rename(columns={"size":"Cantidad"})
         st.plotly_chart(styled_fig(px.bar(resumen, x="Tipo", y="Cantidad", text_auto=True, title="Clientes por tipo de negocio"), 360), use_container_width=True)
 
+def proveedores_page():
+    banner(); header("Proveedores", "Alta de proveedores, carga de compras y costos para calcular ganancias por producto.")
+    df = get_products()
+
+    st.subheader("🏭 Cargar proveedor")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        proveedor = st.text_input("Proveedor", placeholder="Ej: Molino Cañuelas")
+        telefono = st.text_input("Teléfono proveedor", placeholder="Ej: 11 1234-5678")
+    with c2:
+        zona = st.text_input("Zona / Localidad", placeholder="Ej: CABA")
+    with c3:
+        obs = st.text_area("Observaciones proveedor", placeholder="Condiciones, contacto, etc.")
+    if st.button("Guardar proveedor", use_container_width=True):
+        if proveedor.strip():
+            add_proveedor_db(proveedor, telefono, zona, obs)
+            st.success("Proveedor guardado correctamente.")
+        else:
+            st.warning("Ingresá el nombre del proveedor.")
+
+    st.subheader("📦 Registrar compra a proveedor")
+    proveedores = get_provider_names()
+    productos = df["Producto"].tolist() if not df.empty else []
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        prov_compra = st.selectbox("Proveedor de la compra", proveedores)
+        prod_compra = st.selectbox("Producto comprado", productos) if productos else st.text_input("Producto comprado")
+    with c2:
+        cantidad = st.number_input("Cantidad comprada", min_value=0.0, value=1.0, step=1.0)
+        unidad = st.selectbox("Unidad", ["kg", "unidad", "bolsa", "caja", "bulto"])
+    with c3:
+        costo_total = st.number_input("Costo total pagado", min_value=0.0, value=0.0, step=100.0)
+        detalle = st.text_input("Detalle", placeholder="Ej: 300 bolsas 4.0")
+    registrar_egreso = st.checkbox("Registrar automáticamente como egreso de caja", value=True)
+    if st.button("Guardar compra", use_container_width=True):
+        if not str(prod_compra).strip():
+            st.warning("Ingresá o seleccioná un producto.")
+        elif cantidad <= 0 or costo_total <= 0:
+            st.warning("La cantidad y el costo total deben ser mayores a cero.")
+        else:
+            fecha = datetime.now().strftime("%d/%m/%Y %H:%M")
+            save_compra_db(fecha, prov_compra, str(prod_compra), cantidad, unidad, costo_total, detalle)
+            if registrar_egreso:
+                save_movimiento_caja(fecha, "Egreso", f"Compra a {prov_compra}: {cantidad:g} {unidad} de {prod_compra}", costo_total, "Efectivo/Transferencia", detalle)
+            st.success("Compra guardada. Ya se puede usar para calcular ganancia por producto.")
+
+    st.subheader("👥 Proveedores guardados")
+    proveedores_df = load_proveedores_df()
+    st.dataframe(proveedores_df, use_container_width=True, hide_index=True)
+
+    st.subheader("🧾 Compras guardadas")
+    compras = load_compras_df()
+    if not compras.empty:
+        st.dataframe(compras[["Fecha","Proveedor","Producto","Cantidad","Unidad","Costo total $","Costo unitario $","Detalle"]], use_container_width=True, hide_index=True)
+    else:
+        st.info("Todavía no hay compras cargadas.")
+
+def caja_page():
+    banner(); header("Caja", "Ingresos y egresos de dinero guardados de forma permanente.")
+    st.subheader("➕ Nuevo movimiento de caja")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        tipo = st.selectbox("Tipo", ["Ingreso", "Egreso"])
+        monto = st.number_input("Monto", min_value=0.0, value=0.0, step=100.0)
+    with c2:
+        concepto = st.text_input("Concepto", placeholder="Ej: Pago proveedor / Cobro cliente")
+        medio = st.selectbox("Medio", ["Efectivo", "Transferencia", "Mercado Pago", "Cheque", "Otro"])
+    with c3:
+        observaciones = st.text_area("Observaciones")
+    if st.button("Guardar movimiento", use_container_width=True):
+        if monto <= 0 or not concepto.strip():
+            st.warning("Ingresá concepto y monto mayor a cero.")
+        else:
+            save_movimiento_caja(datetime.now().strftime("%d/%m/%Y %H:%M"), tipo, concepto, monto, medio, observaciones)
+            st.success("Movimiento guardado correctamente.")
+
+    caja = load_caja_df()
+    ingresos = caja[caja["Tipo"] == "Ingreso"]["Monto"].sum() if not caja.empty else 0
+    egresos = caja[caja["Tipo"] == "Egreso"]["Monto"].sum() if not caja.empty else 0
+    c1, c2, c3 = st.columns(3)
+    with c1: st.metric("Ingresos", money(ingresos))
+    with c2: st.metric("Egresos", money(egresos))
+    with c3: st.metric("Saldo", money(ingresos - egresos))
+    st.subheader("📋 Movimientos")
+    if not caja.empty:
+        st.dataframe(caja[["Fecha","Tipo","Concepto","Monto $","Medio","Observaciones"]], use_container_width=True, hide_index=True)
+    else:
+        st.info("Todavía no hay movimientos de caja.")
+
+def ganancias_page():
+    banner(); header("Ganancias", "Ganancia y pérdida por producto comparando compras contra ventas.")
+    ventas_items = load_ventas_items_df()
+    compras = load_compras_df()
+    if ventas_items.empty:
+        st.info("Todavía no hay ventas reales por producto. Generá tickets desde Venta fraccionada.")
+        return
+
+    costos = costo_promedio_por_producto()
+    rows = []
+    for producto, g in ventas_items.groupby("Producto"):
+        total_vendido = g["Total"].sum()
+        cantidad_base = g["Cantidad base"].sum()
+        costo_unit = costos.get(producto, 0)
+        costo_estimado = costo_unit * cantidad_base if costo_unit else 0
+        ganancia = total_vendido - costo_estimado if costo_unit else 0
+        margen = (ganancia / total_vendido * 100) if total_vendido and costo_unit else 0
+        rows.append({
+            "Producto": producto,
+            "Cantidad vendida base": round(cantidad_base, 3),
+            "Vendido $": money(total_vendido),
+            "Costo promedio $": money(costo_unit) if costo_unit else "Sin costo cargado",
+            "Costo estimado $": money(costo_estimado) if costo_unit else "-",
+            "Ganancia $": money(ganancia) if costo_unit else "-",
+            "Margen %": f"{margen:.1f}%" if costo_unit else "-",
+        })
+    res = pd.DataFrame(rows)
+    st.dataframe(res, use_container_width=True, hide_index=True)
+
+    con_costo = [r for r in rows if r["Ganancia $"] != "-"]
+    if con_costo:
+        plot_df = pd.DataFrame(con_costo)
+        plot_df["Ganancia num"] = plot_df["Ganancia $"].str.replace("$", "", regex=False).str.replace(".", "", regex=False).astype(float)
+        st.plotly_chart(styled_fig(px.bar(plot_df, x="Producto", y="Ganancia num", title="Ganancia estimada por producto"), 420), use_container_width=True)
+    st.markdown('<div class="locked-box">📌 Para ver ganancias reales, primero cargá las compras en Proveedores con el mismo nombre de producto que después vendés.</div>', unsafe_allow_html=True)
+
 def logistica_page():
     banner(); header("Logística", "Vista comercial de preparación, despacho y entrega de pedidos.")
     rutas = pd.DataFrame({"Ruta":["Centro","Zona Norte","Zona Oeste","Zona Sur"],"Chofer":["Martín","Lucas","Diego","Sergio"],"Pedidos":[12,8,10,7],"Estado":["En reparto","Preparando","En reparto","Pendiente"]})
@@ -834,6 +1180,9 @@ else:
         "Venta fraccionada": venta_fraccionada,
         "Ticket / Cobro": ticket_page,
         "Clientes": clientes_page,
+        "Proveedores": proveedores_page,
+        "Caja": caja_page,
+        "Ganancias": ganancias_page,
         "Logística": logistica_page,
         "Reportes": reportes_page,
         "Configuración": config_page,
