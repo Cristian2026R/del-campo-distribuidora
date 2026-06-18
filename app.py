@@ -74,6 +74,76 @@ def num(x):
     except Exception:
         return 0.0
 
+
+
+def infer_packaging_from_name(nombre):
+    """Detecta contenido por unidad desde el nombre del producto.
+    Ej: Aceite X8Lts => unidad stock=unidad, contenido=8, medida=litro.
+        Harina 25Kg => unidad stock=unidad/bolsa, contenido=25, medida=kg.
+    """
+    txt = str(nombre or '').lower().replace(',', '.')
+    # litros: x8lts, 8 litros, 1.5lt
+    m = re.search(r'(?:x|por|de)?\s*(\d+(?:\.\d+)?)\s*(?:lts?|litros?)\b', txt)
+    if m:
+        return float(m.group(1)), 'litro'
+    # kilos: x10kg, 25 kg, 10 kilos
+    m = re.search(r'(?:x|por|de)?\s*(\d+(?:\.\d+)?)\s*(?:kgs?|kilos?)\b', txt)
+    if m:
+        return float(m.group(1)), 'kg'
+    # gramos: 500g => 0.5 kg
+    m = re.search(r'(?:x|por|de)?\s*(\d+(?:\.\d+)?)\s*(?:grs?|gramos?)\b', txt)
+    if m:
+        return float(m.group(1))/1000.0, 'kg'
+    return 1.0, 'unidad'
+
+def stock_discount_for_sale(row, modo, cantidad):
+    """Devuelve cuánto descontar del stock real según cómo está cargado el producto.
+    Si el stock está en unidades y el producto dice X8Lts, vender 8 litros descuenta 1 unidad.
+    Si se vende por unidad, descuenta unidades completas.
+    """
+    stock_unit = str(getattr(row, 'unidad_stock', 'unidad') or 'unidad').lower()
+    contenido = float(getattr(row, 'contenido_unidad', 1) or 1)
+    medida = str(getattr(row, 'medida_contenido', 'unidad') or 'unidad').lower()
+    q = float(cantidad or 0)
+    if modo == 'Por unidad':
+        return q
+    if modo == 'Por litros':
+        if stock_unit in ['litro','litros']:
+            return q
+        if stock_unit in ['unidad','caja','bolsa','bulto'] and medida in ['litro','litros'] and contenido > 0:
+            return q / contenido
+        return q
+    if modo == 'Por gramos':
+        kg = q / 1000.0
+        if stock_unit in ['kg','kilo','kilos']:
+            return kg
+        if stock_unit in ['unidad','caja','bolsa','bulto'] and medida in ['kg','kilo','kilos'] and contenido > 0:
+            return kg / contenido
+        return kg
+    return q
+
+def auto_price_for_sale(row, modo):
+    contenido = float(getattr(row, 'contenido_unidad', 1) or 1)
+    medida = str(getattr(row, 'medida_contenido', 'unidad') or 'unidad').lower()
+    if modo == 'Por unidad':
+        return float(getattr(row, 'precio_unidad', 0) or 0), float(getattr(row, 'costo_unidad', 0) or 0), 'Precio por unidad'
+    if modo == 'Por litros':
+        pu = float(getattr(row, 'precio_unidad', 0) or 0)
+        cu = float(getattr(row, 'costo_unidad', 0) or 0)
+        if medida in ['litro','litros'] and contenido > 0 and pu > 0:
+            return pu / contenido, cu / contenido if cu else 0, 'Precio por litro'
+        return float(getattr(row, 'precio_kg', 0) or pu), float(getattr(row, 'costo_kg', 0) or cu), 'Precio por litro'
+    # Por gramos / kg
+    pk = float(getattr(row, 'precio_kg', 0) or 0)
+    ck = float(getattr(row, 'costo_kg', 0) or 0)
+    pu = float(getattr(row, 'precio_unidad', 0) or 0)
+    cu = float(getattr(row, 'costo_unidad', 0) or 0)
+    if pk > 0:
+        return pk, ck, 'Precio por kg'
+    if medida in ['kg','kilo','kilos'] and contenido > 0 and pu > 0:
+        return pu / contenido, cu / contenido if cu else 0, 'Precio por kg'
+    return pu, cu, 'Precio por kg'
+
 def now_str(): return datetime.now().strftime("%d/%m/%Y %H:%M")
 def today_str(): return datetime.now().strftime("%d/%m/%Y")
 
@@ -142,7 +212,21 @@ def init_db():
         c.execute("""CREATE TABLE IF NOT EXISTS productos(
             id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT UNIQUE NOT NULL, categoria TEXT DEFAULT 'General',
             precio_unidad REAL DEFAULT 0, precio_kg REAL DEFAULT 0, costo_unidad REAL DEFAULT 0, costo_kg REAL DEFAULT 0,
-            stock REAL DEFAULT 0, unidad_stock TEXT DEFAULT 'kg', activo INTEGER DEFAULT 1, actualizado TEXT DEFAULT CURRENT_TIMESTAMP)""")
+            stock REAL DEFAULT 0, unidad_stock TEXT DEFAULT 'kg', contenido_unidad REAL DEFAULT 1, medida_contenido TEXT DEFAULT 'unidad', activo INTEGER DEFAULT 1, actualizado TEXT DEFAULT CURRENT_TIMESTAMP)""")
+        for col, typ in [("contenido_unidad","REAL DEFAULT 1"),("medida_contenido","TEXT DEFAULT 'unidad'")]:
+            try:
+                c.execute(f"ALTER TABLE productos ADD COLUMN {col} {typ}")
+            except Exception:
+                pass
+        # Completa contenido/medida detectado para productos existentes
+        try:
+            rows=c.execute("SELECT id,nombre,contenido_unidad,medida_contenido FROM productos").fetchall()
+            for _id,_nom,_cont,_med in rows:
+                if not _cont or float(_cont or 0)==1 and (not _med or _med=='unidad'):
+                    cont, med = infer_packaging_from_name(_nom)
+                    c.execute("UPDATE productos SET contenido_unidad=?, medida_contenido=? WHERE id=?", (cont, med, _id))
+        except Exception:
+            pass
         c.execute("""CREATE TABLE IF NOT EXISTS clientes(
             id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT UNIQUE NOT NULL, tipo TEXT DEFAULT '', zona TEXT DEFAULT '', telefono TEXT DEFAULT '', estado TEXT DEFAULT 'Activo', observaciones TEXT DEFAULT '', facturado_inicial REAL DEFAULT 0, pagado_inicial REAL DEFAULT 0, debe_inicial REAL DEFAULT 0, dias_deuda_inicial INTEGER DEFAULT 0, creado TEXT DEFAULT CURRENT_TIMESTAMP)""")
         
@@ -198,14 +282,18 @@ def import_excel_seed(cur):
                     if pu==0 and pk==0 and len(nombre)<35:
                         categoria=nombre; continue
                     if pu==0 and pk==0: continue
-                    cur.execute("INSERT OR IGNORE INTO productos(nombre,categoria,precio_unidad,precio_kg,costo_unidad,costo_kg,stock,unidad_stock,activo) VALUES(?,?,?,?,?,?,?,?,1)",
-                                (nombre,categoria,pu,pk,0,0,0,"kg"))
+                    cont, med = infer_packaging_from_name(nombre)
+                    stock_unit = "unidad" if med in ["litro","kg"] and cont != 1 else med
+                    cur.execute("INSERT OR IGNORE INTO productos(nombre,categoria,precio_unidad,precio_kg,costo_unidad,costo_kg,stock,unidad_stock,contenido_unidad,medida_contenido,activo) VALUES(?,?,?,?,?,?,?,?,?,?,1)",
+                                (nombre,categoria,pu,pk,0,0,0,stock_unit,cont,med))
                     count+=1
             if count: return
         except Exception:
             pass
     for p,cat,pu,pk in [("Mozzarella X10Kg","Mozzarellas",65000,6500),("Jamón Cocido","Fiambres",0,9000),("Harina 000 25Kg","Harinas",15000,600),("Aceitunas Verdes","Conservas",24000,4800)]:
-        cur.execute("INSERT OR IGNORE INTO productos(nombre,categoria,precio_unidad,precio_kg,stock,unidad_stock,activo) VALUES(?,?,?,?,?,?,1)", (p,cat,pu,pk,0,"kg"))
+        cont, med = infer_packaging_from_name(p)
+        stock_unit = "unidad" if med in ["litro","kg"] and cont != 1 else med
+        cur.execute("INSERT OR IGNORE INTO productos(nombre,categoria,precio_unidad,precio_kg,stock,unidad_stock,contenido_unidad,medida_contenido,activo) VALUES(?,?,?,?,?,?,?,?,1)", (p,cat,pu,pk,0,stock_unit,cont,med))
 
 init_db()
 
@@ -336,16 +424,20 @@ def productos_page():
         c1,c2,c3=st.columns(3)
         with c1: nombre=st.text_input("Nombre producto nuevo"); categoria=st.text_input("Categoría", value="General")
         with c2: pu=st.number_input("Precio unidad",0.0,step=100.0); pk=st.number_input("Precio kg",0.0,step=100.0)
-        with c3: cu=st.number_input("Costo unidad",0.0,step=100.0); ck=st.number_input("Costo kg",0.0,step=100.0); stock=st.number_input("Stock real inicial",0.0,step=1.0)
+        with c3: cu=st.number_input("Costo unidad",0.0,step=100.0); ck=st.number_input("Costo kg/litro",0.0,step=100.0); stock=st.number_input("Stock real inicial",0.0,step=1.0)
         unidad=st.selectbox("Unidad stock",["kg","litro","unidad","bolsa","caja","bulto"])
+        cont_sugerido, med_sugerida = infer_packaging_from_name(nombre)
+        c4,c5=st.columns(2)
+        with c4: contenido=st.number_input("Contenido por unidad", min_value=0.001, value=float(cont_sugerido), step=0.5, help="Ej: Aceite X8Lts = 8. Harina 25Kg = 25.")
+        with c5: medida=st.selectbox("Medida contenido",["unidad","litro","kg"], index=["unidad","litro","kg"].index(med_sugerida) if med_sugerida in ["unidad","litro","kg"] else 0)
         if st.button("Guardar producto", use_container_width=True):
             if nombre.strip():
-                exec_sql("INSERT OR IGNORE INTO productos(nombre,categoria,precio_unidad,precio_kg,costo_unidad,costo_kg,stock,unidad_stock,activo,actualizado) VALUES(?,?,?,?,?,?,?,?,1,?)", (nombre.strip(),categoria,pu,pk,cu,ck,stock,unidad,now_str()))
+                exec_sql("INSERT OR IGNORE INTO productos(nombre,categoria,precio_unidad,precio_kg,costo_unidad,costo_kg,stock,unidad_stock,contenido_unidad,medida_contenido,activo,actualizado) VALUES(?,?,?,?,?,?,?,?,?,?,1,?)", (nombre.strip(),categoria,pu,pk,cu,ck,stock,unidad,contenido,medida,now_str()))
                 log_event("Productos", "Alta producto", f"{nombre.strip()} · Stock {stock} {unidad} · Venta unidad {money(pu)} · Venta kg {money(pk)}")
                 st.success("Producto guardado."); st.rerun()
     st.subheader("📋 Lista editable")
     if df.empty: st.info("No hay productos."); return
-    show=df[["id","nombre","categoria","Precio unidad $","Precio kg $","Costo unidad $","Costo kg $","stock","unidad_stock","activo"]].copy()
+    show=df[["id","nombre","categoria","Precio unidad $","Precio kg $","Costo unidad $","Costo kg $","stock","unidad_stock","contenido_unidad","medida_contenido","activo"]].copy()
     st.dataframe(show, use_container_width=True, hide_index=True, height=300)
     ids=id_label(df)
     pid=st.selectbox("Editar / eliminar producto", list(ids.keys()), format_func=lambda x: ids.get(str(x),str(x)))
@@ -354,12 +446,15 @@ def productos_page():
     c1,c2,c3=st.columns(3)
     with c1: en=st.text_input("Nombre", value=row.nombre); ec=st.text_input("Categoría", value=row.categoria)
     with c2: epu=st.number_input("Precio unidad editable", value=float(row.precio_unidad), step=100.0); epk=st.number_input("Precio kg editable", value=float(row.precio_kg), step=100.0)
-    with c3: ecu=st.number_input("Costo unidad editable", value=float(row.costo_unidad), step=100.0); eck=st.number_input("Costo kg editable", value=float(row.costo_kg), step=100.0); estock=st.number_input("Stock real editable", value=float(row.stock), step=1.0)
-    eun=st.selectbox("Unidad", ["kg","litro","unidad","bolsa","caja","bulto"], index=["kg","litro","unidad","bolsa","caja","bulto"].index(row.unidad_stock) if row.unidad_stock in ["kg","litro","unidad","bolsa","caja","bulto"] else 0)
+    with c3: ecu=st.number_input("Costo unidad editable", value=float(row.costo_unidad), step=100.0); eck=st.number_input("Costo kg/litro editable", value=float(row.costo_kg), step=100.0); estock=st.number_input("Stock real editable", value=float(row.stock), step=1.0)
+    eun=st.selectbox("Unidad stock", ["kg","litro","unidad","bolsa","caja","bulto"], index=["kg","litro","unidad","bolsa","caja","bulto"].index(row.unidad_stock) if row.unidad_stock in ["kg","litro","unidad","bolsa","caja","bulto"] else 0)
+    c4,c5=st.columns(2)
+    with c4: econtenido=st.number_input("Contenido por unidad editable", min_value=0.001, value=float(getattr(row,'contenido_unidad',1) or 1), step=0.5, help="Ej: 1 unidad de aceite X8Lts contiene 8 litros.")
+    with c5: emedida=st.selectbox("Medida contenido editable", ["unidad","litro","kg"], index=["unidad","litro","kg"].index(getattr(row,'medida_contenido','unidad')) if getattr(row,'medida_contenido','unidad') in ["unidad","litro","kg"] else 0)
     active=st.checkbox("Producto activo", value=bool(row.activo))
     c1,c2=st.columns(2)
     if c1.button("💾 Guardar cambios producto", use_container_width=True):
-        exec_sql("UPDATE productos SET nombre=?,categoria=?,precio_unidad=?,precio_kg=?,costo_unidad=?,costo_kg=?,stock=?,unidad_stock=?,activo=?,actualizado=? WHERE id=?", (en,ec,epu,epk,ecu,eck,estock,eun,1 if active else 0,now_str(),int(pid_int)))
+        exec_sql("UPDATE productos SET nombre=?,categoria=?,precio_unidad=?,precio_kg=?,costo_unidad=?,costo_kg=?,stock=?,unidad_stock=?,contenido_unidad=?,medida_contenido=?,activo=?,actualizado=? WHERE id=?", (en,ec,epu,epk,ecu,eck,estock,eun,econtenido,emedida,1 if active else 0,now_str(),int(pid_int)))
         log_event("Productos", "Edición producto", f"{en} · Stock {estock} {eun} · Venta unidad {money(epu)} · Venta kg {money(epk)}")
         st.success("Producto actualizado."); st.rerun()
     if c2.button("🗑️ Eliminar producto", use_container_width=True):
@@ -387,36 +482,32 @@ def venta_page():
         modo=st.radio("Modo",["Por gramos","Por litros","Por unidad"],horizontal=True)
         if modo=="Por gramos":
             gramos=st.number_input("Peso exacto en gramos", min_value=1.0, max_value=50000.0, value=100.0, step=1.0, key=f"gramos_{pid}")
-            cantidad_base=gramos/1000
+            cantidad_venta=gramos
             cantidad_txt=f"{gramos:g} g" if gramos<1000 else f"{gramos/1000:g} kg"
-            # Precio automático: primero precio por kg; si no existe, usa precio unidad para evitar $0.
-            precio_unit_auto=float(pr.precio_kg or pr.precio_unidad or 0)
-            costo_unit=float(pr.costo_kg or pr.costo_unidad or 0)
-            precio_label="Precio por kg"
         elif modo=="Por litros":
             litros=st.number_input("Litros exactos", min_value=0.01, value=1.0, step=0.01, format="%.2f", key=f"litros_{pid}")
-            cantidad_base=litros
+            cantidad_venta=litros
             cantidad_txt=f"{litros:g} lts"
-            # Precio automático para litros: primero precio unidad; si no existe, usa precio kg.
-            precio_unit_auto=float(pr.precio_unidad or pr.precio_kg or 0)
-            costo_unit=float(pr.costo_unidad or pr.costo_kg or 0)
-            precio_label="Precio por litro"
         else:
             unidades=st.number_input("Unidades", min_value=1.0, value=1.0, step=1.0, key=f"unidades_{pid}")
-            cantidad_base=unidades
-            cantidad_txt=f"{unidades:g} u."
-            precio_unit_auto=float(pr.precio_unidad or pr.precio_kg or 0)
-            costo_unit=float(pr.costo_unidad or pr.costo_kg or 0)
-            precio_label="Precio por unidad"
+            cantidad_venta=unidades
+            extra=""
+            if str(getattr(pr,'medida_contenido','unidad')) in ["litro","kg"] and float(getattr(pr,'contenido_unidad',1) or 1) != 1:
+                extra=f" ({unidades*float(pr.contenido_unidad):g} {pr.medida_contenido})"
+            cantidad_txt=f"{unidades:g} u.{extra}"
+        descuento_stock = stock_discount_for_sale(pr, modo, cantidad_venta)
+        cantidad_base = descuento_stock
+        precio_unit_auto, costo_unit, precio_label = auto_price_for_sale(pr, modo)
         st.markdown("#### ✍️ Edición manual antes de agregar")
         st.caption("El sistema calcula el total automáticamente con el producto, cliente y precio elegido. Si hace falta, podés corregir producto, precio o total manualmente antes de agregarlo al ticket.")
         nombre_ticket=st.text_input("Nombre del producto en ticket", value=str(pr.nombre), key=f"nombre_ticket_{pid}_{modo}")
         precio_key=f"precio_ticket_{pid}_{modo}_{float(cantidad_base):.3f}"
         precio_unit=st.number_input(precio_label, value=float(precio_unit_auto), step=100.0, key=precio_key)
-        total_auto=precio_unit*cantidad_base
+        cantidad_precio = (cantidad_venta/1000.0) if modo=="Por gramos" else cantidad_venta
+        total_auto=precio_unit*cantidad_precio
         total_key=f"total_ticket_{pid}_{modo}_{float(cantidad_base):.3f}_{float(precio_unit):.2f}"
         total_manual=st.number_input("Total del producto", value=float(round(total_auto,2)), step=100.0, key=total_key)
-        costo=costo_unit*cantidad_base
+        costo=costo_unit*cantidad_precio
         kpi("Subtotal automático / editable", money(total_manual), f"{nombre_ticket} · {cantidad_txt}")
         if st.button("➕ Agregar al ticket", use_container_width=True):
             st.session_state.cart.append({"producto_id":int(pid),"producto_nombre":nombre_ticket,"modo":modo,"cantidad_texto":cantidad_txt,"cantidad_base":float(cantidad_base),"precio_unitario":float(precio_unit),"costo_unitario":float(costo_unit),"total":round(float(total_manual),2),"costo_total":round(float(costo),2)})
@@ -433,7 +524,7 @@ def venta_page():
                 item=st.session_state.cart[idx]
                 en=st.text_input("Editar nombre", value=item["producto_nombre"])
                 ecant=st.text_input("Editar cantidad texto", value=item["cantidad_texto"])
-                ebase=st.number_input("Cantidad base para descontar stock", value=float(item["cantidad_base"]), step=0.001, format="%.3f")
+                ebase=st.number_input("Descuento de stock real", value=float(item["cantidad_base"]), step=0.001, format="%.3f", help="Si el stock está en unidades, vender 8 litros de aceite X8Lts descuenta 1 unidad.")
                 epu=st.number_input("Editar precio unitario", value=float(item["precio_unitario"]), step=100.0)
                 etot=st.number_input("Editar total", value=float(item["total"]), step=100.0)
                 a1,a2=st.columns(2)
@@ -858,7 +949,7 @@ def reportes_page():
     if not its.empty:
         st.subheader("Histórico de ventas por producto"); st.dataframe(its,use_container_width=True,hide_index=True)
     if not p.empty:
-        st.subheader("Stock real actual"); st.dataframe(p[["nombre","categoria","stock","unidad_stock","Precio unidad $","Precio kg $","Costo unidad $","Costo kg $"]],use_container_width=True,hide_index=True)
+        st.subheader("Stock real actual"); st.dataframe(p[["nombre","categoria","stock","unidad_stock","contenido_unidad","medida_contenido","Precio unidad $","Precio kg $","Costo unidad $","Costo kg $"]],use_container_width=True,hide_index=True)
     if not compras.empty:
         st.subheader("Compras históricas a proveedores"); st.dataframe(compras,use_container_width=True,hide_index=True)
 
