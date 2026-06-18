@@ -290,7 +290,7 @@ def productos_page():
         with c1: nombre=st.text_input("Nombre producto nuevo"); categoria=st.text_input("Categoría", value="General")
         with c2: pu=st.number_input("Precio unidad",0.0,step=100.0); pk=st.number_input("Precio kg",0.0,step=100.0)
         with c3: cu=st.number_input("Costo unidad",0.0,step=100.0); ck=st.number_input("Costo kg",0.0,step=100.0); stock=st.number_input("Stock real inicial",0.0,step=1.0)
-        unidad=st.selectbox("Unidad stock",["kg","unidad","bolsa","caja","bulto"])
+        unidad=st.selectbox("Unidad stock",["kg","litro","unidad","bolsa","caja","bulto"])
         if st.button("Guardar producto", use_container_width=True):
             if nombre.strip():
                 exec_sql("INSERT OR IGNORE INTO productos(nombre,categoria,precio_unidad,precio_kg,costo_unidad,costo_kg,stock,unidad_stock,activo,actualizado) VALUES(?,?,?,?,?,?,?,?,1,?)", (nombre.strip(),categoria,pu,pk,cu,ck,stock,unidad,now_str()))
@@ -307,7 +307,7 @@ def productos_page():
     with c1: en=st.text_input("Nombre", value=row.nombre); ec=st.text_input("Categoría", value=row.categoria)
     with c2: epu=st.number_input("Precio unidad editable", value=float(row.precio_unidad), step=100.0); epk=st.number_input("Precio kg editable", value=float(row.precio_kg), step=100.0)
     with c3: ecu=st.number_input("Costo unidad editable", value=float(row.costo_unidad), step=100.0); eck=st.number_input("Costo kg editable", value=float(row.costo_kg), step=100.0); estock=st.number_input("Stock real editable", value=float(row.stock), step=1.0)
-    eun=st.selectbox("Unidad", ["kg","unidad","bolsa","caja","bulto"], index=["kg","unidad","bolsa","caja","bulto"].index(row.unidad_stock) if row.unidad_stock in ["kg","unidad","bolsa","caja","bulto"] else 0)
+    eun=st.selectbox("Unidad", ["kg","litro","unidad","bolsa","caja","bulto"], index=["kg","litro","unidad","bolsa","caja","bulto"].index(row.unidad_stock) if row.unidad_stock in ["kg","litro","unidad","bolsa","caja","bulto"] else 0)
     active=st.checkbox("Producto activo", value=bool(row.activo))
     c1,c2=st.columns(2)
     if c1.button("💾 Guardar cambios producto", use_container_width=True):
@@ -317,7 +317,7 @@ def productos_page():
         exec_sql("DELETE FROM productos WHERE id=?", (int(pid_int),)); st.success("Producto eliminado."); st.rerun()
 
 def venta_page():
-    banner(); header("Venta / Ticket", "Ticket editable con varios productos, gramos exactos, precios manuales y descuento automático de stock.")
+    banner(); header("Venta / Ticket", "Ticket editable con varios productos, gramos/litros exactos, precios automáticos editables y descuento automático de stock.")
     if "cart" not in st.session_state:
         st.session_state.cart=[]
     prods=productos_df(True); cl=clientes_df()
@@ -335,26 +335,38 @@ def venta_page():
         pid_str=st.selectbox("Producto", list(labels_p.keys()), format_func=lambda x: labels_p.get(str(x),str(x)))
         pid=selected_int(pid_str)
         pr=prods[prods.id==pid].iloc[0]
-        modo=st.radio("Modo",["Por gramos","Por unidad"],horizontal=True)
+        modo=st.radio("Modo",["Por gramos","Por litros","Por unidad"],horizontal=True)
         if modo=="Por gramos":
             gramos=st.number_input("Peso exacto en gramos", min_value=1.0, max_value=50000.0, value=100.0, step=1.0)
             cantidad_base=gramos/1000
             cantidad_txt=f"{gramos:g} g" if gramos<1000 else f"{gramos/1000:g} kg"
             precio_unit_auto=float(pr.precio_kg or 0)
             costo_unit=float(pr.costo_kg or 0)
+            precio_label="Precio por kg"
+        elif modo=="Por litros":
+            litros=st.number_input("Litros exactos", min_value=0.01, value=1.0, step=0.01, format="%.2f")
+            cantidad_base=litros
+            cantidad_txt=f"{litros:g} lts"
+            # Para litros usamos precio_unidad como precio por litro editable.
+            # Si el cliente necesita otro importe, lo corrige abajo antes de agregar al ticket.
+            precio_unit_auto=float(pr.precio_unidad or pr.precio_kg or 0)
+            costo_unit=float(pr.costo_unidad or pr.costo_kg or 0)
+            precio_label="Precio por litro"
         else:
             unidades=st.number_input("Unidades", min_value=1.0, value=1.0, step=1.0)
             cantidad_base=unidades
             cantidad_txt=f"{unidades:g} u."
             precio_unit_auto=float(pr.precio_unidad or 0)
             costo_unit=float(pr.costo_unidad or 0)
+            precio_label="Precio por unidad"
         st.markdown("#### ✍️ Edición manual antes de agregar")
+        st.caption("El sistema calcula el total automáticamente con el producto, cliente y precio elegido. Si hace falta, podés corregir producto, precio o total manualmente antes de agregarlo al ticket.")
         nombre_ticket=st.text_input("Nombre del producto en ticket", value=str(pr.nombre))
-        precio_unit=st.number_input("Precio manual por kg / unidad", value=float(precio_unit_auto), step=100.0)
+        precio_unit=st.number_input(precio_label, value=float(precio_unit_auto), step=100.0)
         total_auto=precio_unit*cantidad_base
-        total_manual=st.number_input("Total manual del producto", value=float(round(total_auto,2)), step=100.0)
+        total_manual=st.number_input("Total del producto", value=float(round(total_auto,2)), step=100.0)
         costo=costo_unit*cantidad_base
-        kpi("Subtotal", money(total_manual), f"{nombre_ticket} · {cantidad_txt}")
+        kpi("Subtotal automático / editable", money(total_manual), f"{nombre_ticket} · {cantidad_txt}")
         if st.button("➕ Agregar al ticket", use_container_width=True):
             st.session_state.cart.append({"producto_id":int(pid),"producto_nombre":nombre_ticket,"modo":modo,"cantidad_texto":cantidad_txt,"cantidad_base":float(cantidad_base),"precio_unitario":float(precio_unit),"costo_unitario":float(costo_unit),"total":round(float(total_manual),2),"costo_total":round(float(costo),2)})
             st.rerun()
@@ -482,7 +494,7 @@ def proveedores_page():
         st.subheader("🧾 Cargar compra manual")
         c1,c2,c3=st.columns(3)
         with c1: prod=st.text_input("Producto comprado manual", placeholder="Ej: Harina 000 25kg")
-        with c2: cant=st.number_input("Cantidad comprada",0.0,step=1.0); unidad=st.selectbox("Unidad compra",["kg","unidad","bolsa","caja","bulto"])
+        with c2: cant=st.number_input("Cantidad comprada",0.0,step=1.0); unidad=st.selectbox("Unidad compra",["kg","litro","unidad","bolsa","caja","bulto"])
         with c3: costo=st.number_input("Costo total",0.0,step=100.0); pag=st.number_input("Pagado al proveedor",0.0,step=100.0)
         det=st.text_input("Detalle compra")
         if st.button("Guardar compra proveedor",use_container_width=True):
