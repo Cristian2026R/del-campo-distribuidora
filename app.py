@@ -602,42 +602,46 @@ def venta_page():
         pagado=0.0
         if metodo=="Cuenta corriente":
             pagado=st.number_input("Monto pagado ahora (parcial)",0.0,step=100.0)
-        pid_str=st.selectbox("Producto", list(labels_p.keys()), format_func=lambda x: labels_p.get(str(x),str(x)))
+        producto_opts=["0"]+list(labels_p.keys())
+        pid_str=st.selectbox("Producto", producto_opts, index=0, format_func=lambda x: "Seleccionar producto" if str(x)=="0" else labels_p.get(str(x),str(x)))
         pid=selected_int(pid_str)
-        pr=prods[prods.id==pid].iloc[0]
-        modo=st.radio("Modo",["Por gramos","Por litros","Por unidad"],horizontal=True)
-        if modo=="Por gramos":
-            gramos=st.number_input("Peso exacto en gramos", min_value=1.0, max_value=50000.0, value=100.0, step=1.0, key=f"gramos_{pid}")
-            cantidad_venta=gramos
-            cantidad_txt=f"{gramos:g} g" if gramos<1000 else f"{gramos/1000:g} kg"
-        elif modo=="Por litros":
-            litros=st.number_input("Litros exactos", min_value=0.01, value=1.0, step=0.01, format="%.2f", key=f"litros_{pid}")
-            cantidad_venta=litros
-            cantidad_txt=f"{litros:g} lts"
+        if pid == 0:
+            st.info("Seleccioná un producto para calcular precio y stock.")
         else:
-            unidades=st.number_input("Unidades", min_value=1.0, value=1.0, step=1.0, key=f"unidades_{pid}")
-            cantidad_venta=unidades
-            extra=""
-            if str(getattr(pr,'medida_contenido','unidad')) in ["litro","kg"] and float(getattr(pr,'contenido_unidad',1) or 1) != 1:
-                extra=f" ({unidades*float(pr.contenido_unidad):g} {pr.medida_contenido})"
-            cantidad_txt=f"{unidades:g} u.{extra}"
-        descuento_stock = stock_discount_for_sale(pr, modo, cantidad_venta)
-        cantidad_base = descuento_stock
-        precio_unit_auto, costo_unit, precio_label = auto_price_for_sale(pr, modo)
-        st.markdown("#### ✍️ Edición manual antes de agregar")
-        st.caption("El sistema calcula el total automáticamente con el producto, cliente y precio elegido. Si hace falta, podés corregir producto, precio o total manualmente antes de agregarlo al ticket.")
-        nombre_ticket=st.text_input("Nombre del producto en ticket", value=str(pr.nombre), key=f"nombre_ticket_{pid}_{modo}")
-        precio_key=f"precio_ticket_{pid}_{modo}_{float(cantidad_base):.3f}"
-        precio_unit=st.number_input(precio_label, value=float(precio_unit_auto), step=100.0, key=precio_key)
-        cantidad_precio = (cantidad_venta/1000.0) if modo=="Por gramos" else cantidad_venta
-        total_auto=precio_unit*cantidad_precio
-        total_key=f"total_ticket_{pid}_{modo}_{float(cantidad_base):.3f}_{float(precio_unit):.2f}"
-        total_manual=st.number_input("Total del producto", value=float(round(total_auto,2)), step=100.0, key=total_key)
-        costo=costo_unit*cantidad_precio
-        kpi("Subtotal automático / editable", money(total_manual), f"{nombre_ticket} · {cantidad_txt}")
-        if st.button("➕ Agregar al ticket", use_container_width=True):
-            st.session_state.cart.append({"producto_id":int(pid),"producto_nombre":nombre_ticket,"modo":modo,"cantidad_texto":cantidad_txt,"cantidad_base":float(cantidad_base),"precio_unitario":float(precio_unit),"costo_unitario":float(costo_unit),"total":round(float(total_manual),2),"costo_total":round(float(costo),2)})
-            st.rerun()
+            pr=prods[prods.id==pid].iloc[0]
+            modo=st.radio("Modo",["Por gramos","Por litros","Por unidad"],index=2,horizontal=True)
+            if modo=="Por gramos":
+                gramos=st.number_input("Peso exacto en gramos", min_value=1.0, max_value=50000.0, value=100.0, step=1.0, key=f"gramos_{pid}")
+                cantidad_venta=gramos
+                cantidad_txt=f"{gramos:g} g" if gramos<1000 else f"{gramos/1000:g} kg"
+            elif modo=="Por litros":
+                litros=st.number_input("Litros exactos", min_value=0.01, value=1.0, step=0.01, format="%.2f", key=f"litros_{pid}")
+                cantidad_venta=litros
+                cantidad_txt=f"{litros:g} lts"
+            else:
+                unidades=st.number_input("Unidades", min_value=1.0, value=1.0, step=1.0, key=f"unidades_{pid}")
+                cantidad_venta=unidades
+                extra=""
+                if str(getattr(pr,'medida_contenido','unidad')) in ["litro","kg"] and float(getattr(pr,'contenido_unidad',1) or 1) != 1:
+                    extra=f" ({unidades*float(pr.contenido_unidad):g} {pr.medida_contenido})"
+                cantidad_txt=f"{unidades:g} u.{extra}"
+            descuento_stock = stock_discount_for_sale(pr, modo, cantidad_venta)
+            cantidad_base = descuento_stock
+            precio_unit_auto, costo_unit, precio_label = auto_price_for_sale(pr, modo)
+            st.markdown("#### ✍️ Edición manual antes de agregar")
+            st.caption("El sistema calcula el total automáticamente con el producto, cliente y precio elegido. Si hace falta, podés corregir producto, precio o total manualmente antes de agregarlo al ticket.")
+            nombre_ticket=st.text_input("Nombre del producto en ticket", value=str(pr.nombre), key=f"nombre_ticket_{pid}_{modo}")
+            precio_key=f"precio_ticket_{pid}_{modo}_{float(cantidad_base):.3f}"
+            precio_unit=st.number_input(precio_label, value=float(precio_unit_auto), step=100.0, key=precio_key)
+            cantidad_precio = (cantidad_venta/1000.0) if modo=="Por gramos" else cantidad_venta
+            total_auto=precio_unit*cantidad_precio
+            total_key=f"total_ticket_{pid}_{modo}_{float(cantidad_base):.3f}_{float(precio_unit):.2f}"
+            total_manual=st.number_input("Total del producto", value=float(round(total_auto,2)), step=100.0, key=total_key)
+            costo=costo_unit*cantidad_precio
+            kpi("Subtotal automático / editable", money(total_manual), f"{nombre_ticket} · {cantidad_txt}")
+            if st.button("➕ Agregar al ticket", use_container_width=True):
+                st.session_state.cart.append({"producto_id":int(pid),"producto_nombre":nombre_ticket,"modo":modo,"cantidad_texto":cantidad_txt,"cantidad_base":float(cantidad_base),"precio_unitario":float(precio_unit),"costo_unitario":float(costo_unit),"total":round(float(total_manual),2),"costo_total":round(float(costo),2)})
+                st.rerun()
     with c2:
         st.subheader("🧾 Ticket actual")
         if st.session_state.cart:
