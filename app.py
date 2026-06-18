@@ -241,7 +241,12 @@ def init_db():
         c.execute("""CREATE TABLE IF NOT EXISTS proveedores(
             id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT UNIQUE NOT NULL, telefono TEXT DEFAULT '', zona TEXT DEFAULT '', observaciones TEXT DEFAULT '')""")
         c.execute("""CREATE TABLE IF NOT EXISTS compras(
-            id INTEGER PRIMARY KEY AUTOINCREMENT, fecha TEXT, proveedor_id INTEGER, producto TEXT, cantidad REAL, unidad TEXT, costo_total REAL, pagado REAL DEFAULT 0, detalle TEXT DEFAULT '')""")
+            id INTEGER PRIMARY KEY AUTOINCREMENT, fecha TEXT, proveedor_id INTEGER, producto TEXT, cantidad REAL, unidad TEXT, costo_total REAL, pagado REAL DEFAULT 0, detalle TEXT DEFAULT '', producto_id INTEGER DEFAULT 0, stock_delta REAL DEFAULT 0)""")
+        for col, typ in [("producto_id","INTEGER DEFAULT 0"),("stock_delta","REAL DEFAULT 0")]:
+            try:
+                c.execute(f"ALTER TABLE compras ADD COLUMN {col} {typ}")
+            except Exception:
+                pass
         c.execute("""CREATE TABLE IF NOT EXISTS proveedor_pagos(
             id INTEGER PRIMARY KEY AUTOINCREMENT, fecha TEXT, proveedor_id INTEGER, monto REAL, medio TEXT, observaciones TEXT)""")
         c.execute("""CREATE TABLE IF NOT EXISTS ventas(
@@ -876,26 +881,74 @@ def proveedores_page():
         else:
             st.warning("Ingresá un total pagado mayor a cero.")
 
-    st.markdown("### 🧾 Cargar compra manual")
+    st.markdown("### 🧾 Cargar compra a proveedor y actualizar stock")
     compra_pid_str=st.selectbox("Proveedor de la compra", list(labels.keys()), index=list(labels.keys()).index(str(pid)) if str(pid) in labels else 0, format_func=lambda x: labels.get(str(x),str(x)), key="compra_proveedor_select_independiente")
     compra_pid=selected_int(compra_pid_str)
+
+    productos_compra = productos_df(False)
+    prod_options = ["Manual"]
+    prod_map = {}
+    if not productos_compra.empty:
+        for _, prow in productos_compra.iterrows():
+            label = f"{prow.nombre} · stock actual: {float(prow.stock):g} {prow.unidad_stock}"
+            prod_options.append(label)
+            prod_map[label] = int(prow.id)
+
+    c0,c1=st.columns([1,2])
+    with c0:
+        modo_prod_compra = st.selectbox("Origen del producto comprado", ["Producto existente", "Manual"], key=f"modo_prod_compra_{compra_pid}")
+    with c1:
+        if modo_prod_compra == "Producto existente" and len(prod_options) > 1:
+            prod_sel_label = st.selectbox("Producto comprado de la lista", prod_options[1:], key=f"producto_existente_compra_{compra_pid}")
+            producto_id_compra = prod_map.get(prod_sel_label, 0)
+            prod_row = productos_compra[productos_compra.id == producto_id_compra].iloc[0]
+            prod = str(prod_row.nombre)
+            unidad_sugerida = str(prod_row.unidad_stock or "unidad")
+            st.caption(f"Se actualizará stock de: {prod} · stock actual {float(prod_row.stock):g} {unidad_sugerida}")
+        else:
+            producto_id_compra = 0
+            prod_row = None
+            prod = st.text_input("Producto comprado manual", placeholder="Ej: Harina 000 25kg", key=f"compra_prod_manual_{compra_pid}")
+            unidad_sugerida = "unidad"
+
     c1,c2,c3=st.columns(3)
-    with c1: prod=st.text_input("Producto comprado manual", placeholder="Ej: Harina 000 25kg", key=f"compra_prod_{compra_pid}")
+    with c1:
+        cant=st.number_input("Cantidad comprada para sumar al stock",0.0,step=1.0,key=f"compra_cant_{compra_pid}")
+        if producto_id_compra and prod_row is not None:
+            unidades = ["kg","litro","unidad","bolsa","caja","bulto"]
+            idx = unidades.index(unidad_sugerida) if unidad_sugerida in unidades else 2
+            unidad=st.selectbox("Unidad compra",unidades,index=idx,key=f"compra_unidad_{compra_pid}")
+        else:
+            unidad=st.selectbox("Unidad compra",["kg","litro","unidad","bolsa","caja","bulto"],key=f"compra_unidad_{compra_pid}")
     with c2:
-        cant=st.number_input("Cantidad comprada",0.0,step=1.0,key=f"compra_cant_{compra_pid}")
-        unidad=st.selectbox("Unidad compra",["kg","litro","unidad","bolsa","caja","bulto"],key=f"compra_unidad_{compra_pid}")
-    with c3:
         costo=st.number_input("Costo total",0.0,step=100.0,key=f"compra_costo_{compra_pid}")
         pag=st.number_input("Pagado al proveedor",0.0,step=100.0,key=f"compra_pagado_{compra_pid}")
+    with c3:
+        st.markdown("#### Stock")
+        if producto_id_compra and prod_row is not None:
+            stock_actual = float(prod_row.stock or 0)
+            stock_nuevo = stock_actual + float(cant or 0)
+            st.metric("Stock nuevo estimado", f"{stock_nuevo:g} {prod_row.unidad_stock}")
+        else:
+            st.info("Si es manual, no actualiza stock de productos.")
     det=st.text_input("Detalle compra", key=f"compra_detalle_{compra_pid}")
-    if st.button("Guardar compra proveedor",use_container_width=True,key=f"guardar_compra_{compra_pid}"):
-        exec_sql("INSERT INTO compras(fecha,proveedor_id,producto,cantidad,unidad,costo_total,pagado,detalle) VALUES(?,?,?,?,?,?,?,?)",(now_str(),int(compra_pid),prod,cant,unidad,costo,pag,det))
-        log_event("Proveedores", "Compra proveedor", f"{labels.get(str(compra_pid),'')} · {prod} · {cant} {unidad} · {money(costo)}")
-        if pag>0:
-            exec_sql("INSERT INTO proveedor_pagos(fecha,proveedor_id,monto,medio,observaciones) VALUES(?,?,?,?,?)",(now_str(),int(compra_pid),pag,"Transferencia",f"Pago compra {prod}"))
-            exec_sql("INSERT INTO caja(fecha,tipo,concepto,monto,medio,observaciones) VALUES(?,?,?,?,?,?)",(now_str(),"Egreso",f"Pago proveedor {labels.get(str(compra_pid),'')}",pag,"Transferencia",prod))
-            log_event("Caja", "Egreso proveedor", f"{labels.get(str(compra_pid),'')} · {money(pag)}")
-        st.success("Compra guardada."); st.rerun()
+    if st.button("Guardar compra proveedor y actualizar stock",use_container_width=True,key=f"guardar_compra_{compra_pid}"):
+        if not str(prod).strip():
+            st.warning("Ingresá o seleccioná el producto comprado.")
+        elif cant <= 0:
+            st.warning("Ingresá una cantidad comprada mayor a cero.")
+        else:
+            stock_delta = float(cant) if producto_id_compra else 0.0
+            exec_sql("INSERT INTO compras(fecha,proveedor_id,producto,cantidad,unidad,costo_total,pagado,detalle,producto_id,stock_delta) VALUES(?,?,?,?,?,?,?,?,?,?)",(now_str(),int(compra_pid),prod,float(cant),unidad,float(costo),float(pag),det,int(producto_id_compra),float(stock_delta)))
+            if producto_id_compra:
+                exec_sql("UPDATE productos SET stock = COALESCE(stock,0) + ?, actualizado=? WHERE id=?", (float(stock_delta), now_str(), int(producto_id_compra)))
+                log_event("Stock", "Ingreso por compra", f"{prod} · +{stock_delta:g} {unidad} · proveedor {labels.get(str(compra_pid),'')}")
+            log_event("Proveedores", "Compra proveedor", f"{labels.get(str(compra_pid),'')} · {prod} · {cant:g} {unidad} · {money(costo)}")
+            if pag>0:
+                exec_sql("INSERT INTO proveedor_pagos(fecha,proveedor_id,monto,medio,observaciones) VALUES(?,?,?,?,?)",(now_str(),int(compra_pid),float(pag),"Transferencia",f"Pago compra {prod}"))
+                exec_sql("INSERT INTO caja(fecha,tipo,concepto,monto,medio,observaciones) VALUES(?,?,?,?,?,?)",(now_str(),"Egreso",f"Pago proveedor {labels.get(str(compra_pid),'')}",float(pag),"Transferencia",prod))
+                log_event("Caja", "Egreso proveedor", f"{labels.get(str(compra_pid),'')} · {money(pag)}")
+            st.success("Compra guardada y stock actualizado."); st.rerun()
 
     compras=compras_df(); pagos=pagos_proveedores_df()
     if not compras.empty:
@@ -905,7 +958,16 @@ def proveedores_page():
         delc_str=st.selectbox("Compra para eliminar", opts, format_func=lambda x: "Elegir compra" if x=="0" else f"ID {x}")
         delc=selected_int(delc_str)
         if st.button("Eliminar compra",use_container_width=True) and delc>0:
-            exec_sql("DELETE FROM compras WHERE id=?",(int(delc),)); log_event("Proveedores", "Eliminación compra", f"Compra ID {delc}"); st.success("Compra eliminada."); st.rerun()
+            compra_del = df_query("SELECT * FROM compras WHERE id=?", (int(delc),))
+            if not compra_del.empty:
+                cr = compra_del.iloc[0]
+                try:
+                    if int(getattr(cr,'producto_id',0) or 0) > 0 and float(getattr(cr,'stock_delta',0) or 0) > 0:
+                        exec_sql("UPDATE productos SET stock = COALESCE(stock,0) - ?, actualizado=? WHERE id=?", (float(cr.stock_delta), now_str(), int(cr.producto_id)))
+                        log_event("Stock", "Reverso compra eliminada", f"{cr.producto} · -{float(cr.stock_delta):g} {cr.unidad}")
+                except Exception:
+                    pass
+            exec_sql("DELETE FROM compras WHERE id=?",(int(delc),)); log_event("Proveedores", "Eliminación compra", f"Compra ID {delc}"); st.success("Compra eliminada y stock revertido si correspondía."); st.rerun()
     if not pagos.empty:
         st.subheader("Pagos a proveedores")
         st.dataframe(pagos,use_container_width=True,hide_index=True)
