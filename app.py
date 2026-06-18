@@ -220,7 +220,13 @@ def fig_style(fig,h=380):
     return fig
 
 def id_label(df, col="nombre"):
-    return {int(r["id"]): str(r[col]) for _,r in df.iterrows()}
+    return {str(int(r["id"])): str(r[col]) for _,r in df.iterrows()}
+
+def selected_int(value):
+    try:
+        return int(value)
+    except Exception:
+        return 0
 
 # =========================
 # LOGIN/SIDEBAR
@@ -294,8 +300,9 @@ def productos_page():
     show=df[["id","nombre","categoria","Precio unidad $","Precio kg $","Costo unidad $","Costo kg $","stock","unidad_stock","activo"]].copy()
     st.dataframe(show, use_container_width=True, hide_index=True, height=300)
     ids=id_label(df)
-    pid=st.selectbox("Editar / eliminar producto", list(ids.keys()), format_func=lambda x: ids.get(x,str(x)))
-    row=df[df.id==pid].iloc[0]
+    pid=st.selectbox("Editar / eliminar producto", list(ids.keys()), format_func=lambda x: ids.get(str(x),str(x)))
+    pid_int=selected_int(pid)
+    row=df[df.id==pid_int].iloc[0]
     c1,c2,c3=st.columns(3)
     with c1: en=st.text_input("Nombre", value=row.nombre); ec=st.text_input("Categoría", value=row.categoria)
     with c2: epu=st.number_input("Precio unidad editable", value=float(row.precio_unidad), step=100.0); epk=st.number_input("Precio kg editable", value=float(row.precio_kg), step=100.0)
@@ -304,45 +311,74 @@ def productos_page():
     active=st.checkbox("Producto activo", value=bool(row.activo))
     c1,c2=st.columns(2)
     if c1.button("💾 Guardar cambios producto", use_container_width=True):
-        exec_sql("UPDATE productos SET nombre=?,categoria=?,precio_unidad=?,precio_kg=?,costo_unidad=?,costo_kg=?,stock=?,unidad_stock=?,activo=?,actualizado=? WHERE id=?", (en,ec,epu,epk,ecu,eck,estock,eun,1 if active else 0,now_str(),int(pid)))
+        exec_sql("UPDATE productos SET nombre=?,categoria=?,precio_unidad=?,precio_kg=?,costo_unidad=?,costo_kg=?,stock=?,unidad_stock=?,activo=?,actualizado=? WHERE id=?", (en,ec,epu,epk,ecu,eck,estock,eun,1 if active else 0,now_str(),int(pid_int)))
         st.success("Producto actualizado."); st.rerun()
     if c2.button("🗑️ Eliminar producto", use_container_width=True):
-        exec_sql("DELETE FROM productos WHERE id=?", (int(pid),)); st.success("Producto eliminado."); st.rerun()
+        exec_sql("DELETE FROM productos WHERE id=?", (int(pid_int),)); st.success("Producto eliminado."); st.rerun()
 
 def venta_page():
-    banner(); header("Venta / Ticket", "Ticket con varios productos, gramos exactos y descuento automático de stock.")
-    if "cart" not in st.session_state: st.session_state.cart=[]
+    banner(); header("Venta / Ticket", "Ticket editable con varios productos, gramos exactos, precios manuales y descuento automático de stock.")
+    if "cart" not in st.session_state:
+        st.session_state.cart=[]
     prods=productos_df(True); cl=clientes_df()
-    if prods.empty or cl.empty: st.warning("Cargá productos y clientes primero."); return
+    if prods.empty or cl.empty:
+        st.warning("Cargá productos y clientes primero."); return
     labels_c=id_label(cl); labels_p=id_label(prods)
     c1,c2=st.columns([1,1])
     with c1:
-        cid=st.selectbox("Cliente", list(labels_c.keys()), format_func=lambda x: labels_c.get(x,str(x)))
+        cid_str=st.selectbox("Cliente", list(labels_c.keys()), format_func=lambda x: labels_c.get(str(x),str(x)))
+        cid=selected_int(cid_str)
         metodo=st.selectbox("Método de pago",["Efectivo","Transferencia","Mercado Pago","Cuenta corriente"])
         pagado=0.0
-        if metodo=="Cuenta corriente": pagado=st.number_input("Monto pagado ahora (parcial)",0.0,step=100.0)
-        pid=st.selectbox("Producto", list(labels_p.keys()), format_func=lambda x: labels_p.get(x,str(x)))
+        if metodo=="Cuenta corriente":
+            pagado=st.number_input("Monto pagado ahora (parcial)",0.0,step=100.0)
+        pid_str=st.selectbox("Producto", list(labels_p.keys()), format_func=lambda x: labels_p.get(str(x),str(x)))
+        pid=selected_int(pid_str)
         pr=prods[prods.id==pid].iloc[0]
         modo=st.radio("Modo",["Por gramos","Por unidad"],horizontal=True)
         if modo=="Por gramos":
             gramos=st.number_input("Peso exacto en gramos", min_value=1.0, max_value=50000.0, value=100.0, step=1.0)
-            cantidad_base=gramos/1000; cantidad_txt=f"{gramos:g} g" if gramos<1000 else f"{gramos/1000:g} kg"; precio_unit=float(pr.precio_kg or 0); costo_unit=float(pr.costo_kg or 0)
-            total=precio_unit*cantidad_base; costo=costo_unit*cantidad_base
+            cantidad_base=gramos/1000
+            cantidad_txt=f"{gramos:g} g" if gramos<1000 else f"{gramos/1000:g} kg"
+            precio_unit_auto=float(pr.precio_kg or 0)
+            costo_unit=float(pr.costo_kg or 0)
         else:
             unidades=st.number_input("Unidades", min_value=1.0, value=1.0, step=1.0)
-            cantidad_base=unidades; cantidad_txt=f"{unidades:g} u."; precio_unit=float(pr.precio_unidad or 0); costo_unit=float(pr.costo_unidad or 0)
-            total=precio_unit*unidades; costo=costo_unit*unidades
-        kpi("Subtotal", money(total), f"{pr.nombre} · {cantidad_txt}")
+            cantidad_base=unidades
+            cantidad_txt=f"{unidades:g} u."
+            precio_unit_auto=float(pr.precio_unidad or 0)
+            costo_unit=float(pr.costo_unidad or 0)
+        st.markdown("#### ✍️ Edición manual antes de agregar")
+        nombre_ticket=st.text_input("Nombre del producto en ticket", value=str(pr.nombre))
+        precio_unit=st.number_input("Precio manual por kg / unidad", value=float(precio_unit_auto), step=100.0)
+        total_auto=precio_unit*cantidad_base
+        total_manual=st.number_input("Total manual del producto", value=float(round(total_auto,2)), step=100.0)
+        costo=costo_unit*cantidad_base
+        kpi("Subtotal", money(total_manual), f"{nombre_ticket} · {cantidad_txt}")
         if st.button("➕ Agregar al ticket", use_container_width=True):
-            st.session_state.cart.append({"producto_id":int(pid),"producto_nombre":pr.nombre,"modo":modo,"cantidad_texto":cantidad_txt,"cantidad_base":float(cantidad_base),"precio_unitario":precio_unit,"costo_unitario":costo_unit,"total":round(total,2),"costo_total":round(costo,2)})
+            st.session_state.cart.append({"producto_id":int(pid),"producto_nombre":nombre_ticket,"modo":modo,"cantidad_texto":cantidad_txt,"cantidad_base":float(cantidad_base),"precio_unitario":float(precio_unit),"costo_unitario":float(costo_unit),"total":round(float(total_manual),2),"costo_total":round(float(costo),2)})
             st.rerun()
     with c2:
         st.subheader("🧾 Ticket actual")
         if st.session_state.cart:
             cart=pd.DataFrame(st.session_state.cart); cart["Total $"]=cart.total.apply(money)
-            st.dataframe(cart[["producto_nombre","cantidad_texto","Total $"]],use_container_width=True,hide_index=True)
-            total=sum(i["total"] for i in st.session_state.cart)
+            st.dataframe(cart[["producto_nombre","cantidad_texto","precio_unitario","Total $"]],use_container_width=True,hide_index=True)
+            total=sum(float(i["total"]) for i in st.session_state.cart)
             st.metric("Total",money(total))
+            with st.expander("✏️ Editar / eliminar producto del ticket", expanded=False):
+                idx=st.selectbox("Producto del ticket", list(range(len(st.session_state.cart))), format_func=lambda i: f"{i+1}. {st.session_state.cart[i]['producto_nombre']} - {money(st.session_state.cart[i]['total'])}")
+                item=st.session_state.cart[idx]
+                en=st.text_input("Editar nombre", value=item["producto_nombre"])
+                ecant=st.text_input("Editar cantidad texto", value=item["cantidad_texto"])
+                ebase=st.number_input("Cantidad base para descontar stock", value=float(item["cantidad_base"]), step=0.001, format="%.3f")
+                epu=st.number_input("Editar precio unitario", value=float(item["precio_unitario"]), step=100.0)
+                etot=st.number_input("Editar total", value=float(item["total"]), step=100.0)
+                a1,a2=st.columns(2)
+                if a1.button("Guardar edición del item", use_container_width=True):
+                    st.session_state.cart[idx].update({"producto_nombre":en,"cantidad_texto":ecant,"cantidad_base":float(ebase),"precio_unitario":float(epu),"total":float(etot)})
+                    st.success("Item actualizado."); st.rerun()
+                if a2.button("Eliminar item", use_container_width=True):
+                    st.session_state.cart.pop(idx); st.success("Item eliminado."); st.rerun()
             a,b=st.columns(2)
             if a.button("Vaciar", use_container_width=True): st.session_state.cart=[]; st.rerun()
             if b.button("Confirmar venta", use_container_width=True):
@@ -353,11 +389,13 @@ def venta_page():
                     for item in st.session_state.cart:
                         cur.execute("INSERT INTO venta_items(venta_id,producto_id,producto_nombre,modo,cantidad_texto,cantidad_base,precio_unitario,costo_unitario,total,costo_total) VALUES(?,?,?,?,?,?,?,?,?,?)", (vid,item["producto_id"],item["producto_nombre"],item["modo"],item["cantidad_texto"],item["cantidad_base"],item["precio_unitario"],item["costo_unitario"],item["total"],item["costo_total"]))
                         cur.execute("UPDATE productos SET stock=stock-?, actualizado=? WHERE id=?", (item["cantidad_base"],now_str(),item["producto_id"]))
-                    if paid>0: cur.execute("INSERT INTO cliente_pagos(fecha,cliente_id,monto,medio,observaciones) VALUES(?,?,?,?,?)", (now_str(),int(cid),paid,metodo,f"Pago ticket {ticket}"))
-                    if paid>0: cur.execute("INSERT INTO caja(fecha,tipo,concepto,monto,medio,observaciones) VALUES(?,?,?,?,?,?)", (now_str(),"Ingreso",f"Cobro ticket {ticket}",paid,metodo,labels_c.get(cid,"")))
+                    if paid>0:
+                        cur.execute("INSERT INTO cliente_pagos(fecha,cliente_id,monto,medio,observaciones) VALUES(?,?,?,?,?)", (now_str(),int(cid),paid,metodo,f"Pago ticket {ticket}"))
+                        cur.execute("INSERT INTO caja(fecha,tipo,concepto,monto,medio,observaciones) VALUES(?,?,?,?,?,?)", (now_str(),"Ingreso",f"Cobro ticket {ticket}",paid,metodo,labels_c.get(str(cid),"")))
                     conn.commit()
                 st.session_state.last_ticket=ticket; st.session_state.cart=[]; st.success("Venta guardada y stock descontado."); st.rerun()
-        else: st.info("Agregá productos al ticket.")
+        else:
+            st.info("Agregá productos al ticket.")
     render_last_ticket()
 
 def render_last_ticket():
@@ -399,7 +437,8 @@ def clientes_page():
     if not res.empty: st.dataframe(res[["Cliente","Facturado $","Pagado $","Debe $","Días deuda","Alerta"]],use_container_width=True,hide_index=True)
     if cl.empty: return
     labels=id_label(cl)
-    cid=st.selectbox("Editar / eliminar cliente", list(labels.keys()), format_func=lambda x: labels.get(x,str(x)))
+    cid_str=st.selectbox("Editar / eliminar cliente", list(labels.keys()), format_func=lambda x: labels.get(str(x),str(x)))
+    cid=selected_int(cid_str)
     row=cl[cl.id==cid].iloc[0]
     c1,c2,c3=st.columns(3)
     with c1: en=st.text_input("Nombre",value=row.nombre); etel=st.text_input("Teléfono",value=row.telefono)
@@ -409,12 +448,14 @@ def clientes_page():
     if a.button("💾 Guardar cambios cliente", use_container_width=True): exec_sql("UPDATE clientes SET nombre=?,tipo=?,zona=?,telefono=?,estado=?,observaciones=? WHERE id=?", (en,etipo,ezona,etel,eest,eobs,int(cid))); st.success("Cliente actualizado."); st.rerun()
     if b.button("🗑️ Eliminar cliente", use_container_width=True): exec_sql("DELETE FROM clientes WHERE id=?", (int(cid),)); st.success("Cliente eliminado."); st.rerun()
     st.subheader("💵 Registrar pago parcial")
+    pago_cid_str=st.selectbox("Cliente que realiza el pago", list(labels.keys()), format_func=lambda x: labels.get(str(x),str(x)), key="pago_cliente_select")
+    pago_cid=selected_int(pago_cid_str)
     c1,c2,c3=st.columns(3)
     with c1: monto=st.number_input("Monto pago",0.0,step=100.0)
     with c2: medio=st.selectbox("Medio pago",["Efectivo","Transferencia","Mercado Pago","Cheque","Otro"])
     with c3: obsp=st.text_input("Observación pago")
     if st.button("Guardar pago cliente", use_container_width=True):
-        exec_sql("INSERT INTO cliente_pagos(fecha,cliente_id,monto,medio,observaciones) VALUES(?,?,?,?,?)", (now_str(),int(cid),monto,medio,obsp)); exec_sql("INSERT INTO caja(fecha,tipo,concepto,monto,medio,observaciones) VALUES(?,?,?,?,?,?)", (now_str(),"Ingreso",f"Pago cliente {labels[cid]}",monto,medio,obsp)); st.success("Pago guardado."); st.rerun()
+        exec_sql("INSERT INTO cliente_pagos(fecha,cliente_id,monto,medio,observaciones) VALUES(?,?,?,?,?)", (now_str(),int(pago_cid),monto,medio,obsp)); exec_sql("INSERT INTO caja(fecha,tipo,concepto,monto,medio,observaciones) VALUES(?,?,?,?,?,?)", (now_str(),"Ingreso",f"Pago cliente {labels.get(str(pago_cid),'')}",monto,medio,obsp)); st.success("Pago guardado."); st.rerun()
     pagos=pagos_clientes_df()
     if not pagos.empty:
         st.subheader("Pagos cargados")
@@ -430,7 +471,7 @@ def proveedores_page():
     pr=proveedores_df(); labels=id_label(pr) if not pr.empty else {}
     if not pr.empty: st.dataframe(pr,use_container_width=True,hide_index=True)
     if labels:
-        pid=st.selectbox("Proveedor",list(labels.keys()),format_func=lambda x: labels.get(x,str(x)))
+        pid=st.selectbox("Proveedor",list(labels.keys()),format_func=lambda x: labels.get(str(x),str(x)))
         row=pr[pr.id==pid].iloc[0]
         c1,c2=st.columns(2)
         with c1: en=st.text_input("Editar nombre proveedor",value=row.nombre); etel=st.text_input("Editar teléfono",value=row.telefono)
@@ -446,7 +487,7 @@ def proveedores_page():
         det=st.text_input("Detalle compra")
         if st.button("Guardar compra proveedor",use_container_width=True):
             exec_sql("INSERT INTO compras(fecha,proveedor_id,producto,cantidad,unidad,costo_total,pagado,detalle) VALUES(?,?,?,?,?,?,?,?)",(now_str(),int(pid),prod,cant,unidad,costo,pag,det))
-            if pag>0: exec_sql("INSERT INTO proveedor_pagos(fecha,proveedor_id,monto,medio,observaciones) VALUES(?,?,?,?,?)",(now_str(),int(pid),pag,"Transferencia",f"Pago compra {prod}")); exec_sql("INSERT INTO caja(fecha,tipo,concepto,monto,medio,observaciones) VALUES(?,?,?,?,?,?)",(now_str(),"Egreso",f"Pago proveedor {labels[pid]}",pag,"Transferencia",prod))
+            if pag>0: exec_sql("INSERT INTO proveedor_pagos(fecha,proveedor_id,monto,medio,observaciones) VALUES(?,?,?,?,?)",(now_str(),int(pid),pag,"Transferencia",f"Pago compra {prod}")); exec_sql("INSERT INTO caja(fecha,tipo,concepto,monto,medio,observaciones) VALUES(?,?,?,?,?,?)",(now_str(),"Egreso",f"Pago proveedor {labels.get(str(pid),'')}",pag,"Transferencia",prod))
             st.success("Compra guardada."); st.rerun()
         compras=compras_df(); pagos=pagos_proveedores_df()
         if not compras.empty: st.dataframe(compras,use_container_width=True,hide_index=True)
@@ -500,29 +541,55 @@ def ganancias_page():
         st.plotly_chart(fig_style(px.bar(g,x="producto_nombre",y="Ganancia",title="Ganancia histórica por producto")),use_container_width=True)
 
 def logistica_page():
-    banner(); header("Logística", "Organizar recorridos, entregas, visitas diarias y agenda semanal.")
+    banner(); header("Logística", "Organizar recorridos, entregas, visitas diarias y agenda semanal con cliente guardado o manual.")
     cl=clientes_df(); labels=id_label(cl) if not cl.empty else {}
-    with st.expander("➕ Agendar visita / entrega", expanded=False):
+    with st.expander("➕ Agendar visita / entrega", expanded=True):
         c1,c2,c3=st.columns(3)
-        with c1: fecha=st.date_input("Fecha", value=datetime.now().date()); cid=st.selectbox("Cliente", [0]+list(labels.keys()), format_func=lambda x: "Cliente manual" if x==0 else labels.get(x,str(x)))
-        with c2: manual=st.text_input("Cliente manual"); zona=st.text_input("Zona")
-        with c3: direccion=st.text_input("Dirección"); estado=st.selectbox("Estado",["Pendiente","Visitado","No visitado","Reprogramar","Entregado"])
+        with c1:
+            fecha=st.date_input("Fecha programada", value=datetime.now().date())
+            usar_cliente=st.radio("Cliente", ["Cliente guardado","Cliente manual"], horizontal=True)
+        with c2:
+            if usar_cliente=="Cliente guardado" and labels:
+                cid_str=st.selectbox("Seleccionar cliente guardado", list(labels.keys()), format_func=lambda x: labels.get(str(x),str(x)), key="log_cliente_guardado")
+                cid=selected_int(cid_str); manual=""
+            else:
+                cid=None; manual=st.text_input("Cliente manual")
+            zona=st.text_input("Zona")
+        with c3:
+            direccion=st.text_input("Dirección")
+            estado=st.selectbox("Estado",["Pendiente","Visitado","No visitado","Reprogramar","Entregado"])
         detalle=st.text_area("Detalle / pedido / recorrido")
-        if st.button("Guardar visita",use_container_width=True): exec_sql("INSERT INTO logistica(fecha,cliente_id,cliente_manual,zona,direccion,detalle,estado) VALUES(?,?,?,?,?,?,?)",(fecha.strftime("%d/%m/%Y"),None if cid==0 else int(cid),manual,zona,direccion,detalle,estado)); st.rerun()
-    l=logistica_df();
+        if estado=="Reprogramar":
+            nueva_fecha=st.date_input("Nueva fecha reprogramada", value=datetime.now().date()+timedelta(days=1))
+            detalle = (detalle or "") + f" | Reprogramado para {nueva_fecha.strftime('%d/%m/%Y')}"
+        if st.button("Guardar visita",use_container_width=True):
+            exec_sql("INSERT INTO logistica(fecha,cliente_id,cliente_manual,zona,direccion,detalle,estado) VALUES(?,?,?,?,?,?,?)",(fecha.strftime("%d/%m/%Y"),None if not cid else int(cid),manual,zona,direccion,detalle,estado)); st.success("Visita guardada."); st.rerun()
+    l=logistica_df()
     if not l.empty:
         l["Cliente final"]=l.apply(lambda r: r.cliente if pd.notna(r.cliente) and r.cliente else r.cliente_manual,axis=1)
         st.dataframe(l[["id","fecha","Cliente final","zona","direccion","detalle","estado"]],use_container_width=True,hide_index=True)
-        lid=st.number_input("ID visita para editar/eliminar",0,step=1)
+        ids=[str(int(x)) for x in l.id.tolist()]
+        lid_str=st.selectbox("Visita para editar/eliminar", ["0"]+ids, format_func=lambda x: "Elegir visita" if str(x)=="0" else f"ID {x}")
+        lid=selected_int(lid_str)
         if lid>0:
             row=l[l.id==lid]
             if not row.empty:
-                r=row.iloc[0]; c1,c2=st.columns(2)
-                with c1: ef=st.text_input("Fecha visita",value=r.fecha); ez=st.text_input("Zona visita",value=r.zona); ed=st.text_input("Dirección visita",value=r.direccion)
-                with c2: ee=st.selectbox("Estado visita",["Pendiente","Visitado","No visitado","Reprogramar","Entregado"], index=["Pendiente","Visitado","No visitado","Reprogramar","Entregado"].index(r.estado) if r.estado in ["Pendiente","Visitado","No visitado","Reprogramar","Entregado"] else 0); edet=st.text_area("Detalle visita",value=r.detalle)
+                r=row.iloc[0]
+                c1,c2,c3=st.columns(3)
+                with c1:
+                    try: default_date=parse_dt(r.fecha).date() if parse_dt(r.fecha) else datetime.now().date()
+                    except Exception: default_date=datetime.now().date()
+                    ef=st.date_input("Fecha visita", value=default_date, key=f"fecha_edit_{lid}")
+                    ecliente_manual=st.text_input("Cliente manual", value="" if pd.isna(r.cliente_manual) else str(r.cliente_manual))
+                with c2:
+                    ez=st.text_input("Zona visita",value="" if pd.isna(r.zona) else str(r.zona))
+                    ed=st.text_input("Dirección visita",value="" if pd.isna(r.direccion) else str(r.direccion))
+                with c3:
+                    ee=st.selectbox("Estado visita",["Pendiente","Visitado","No visitado","Reprogramar","Entregado"], index=["Pendiente","Visitado","No visitado","Reprogramar","Entregado"].index(r.estado) if r.estado in ["Pendiente","Visitado","No visitado","Reprogramar","Entregado"] else 0)
+                edet=st.text_area("Detalle visita",value="" if pd.isna(r.detalle) else str(r.detalle))
                 a,b=st.columns(2)
-                if a.button("Guardar edición logística",use_container_width=True): exec_sql("UPDATE logistica SET fecha=?,zona=?,direccion=?,detalle=?,estado=? WHERE id=?",(ef,ez,ed,edet,ee,int(lid))); st.rerun()
-                if b.button("Eliminar visita",use_container_width=True): exec_sql("DELETE FROM logistica WHERE id=?",(int(lid),)); st.rerun()
+                if a.button("Guardar edición logística",use_container_width=True): exec_sql("UPDATE logistica SET fecha=?,cliente_manual=?,zona=?,direccion=?,detalle=?,estado=? WHERE id=?",(ef.strftime("%d/%m/%Y"),ecliente_manual,ez,ed,edet,ee,int(lid))); st.success("Logística actualizada."); st.rerun()
+                if b.button("Eliminar visita",use_container_width=True): exec_sql("DELETE FROM logistica WHERE id=?",(int(lid),)); st.success("Visita eliminada."); st.rerun()
     else: st.info("No hay visitas agendadas.")
 
 def reportes_page():
