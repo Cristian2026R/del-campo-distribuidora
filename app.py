@@ -383,8 +383,8 @@ def sidebar():
         st.markdown("## 🧀 DON VALENTIN")
         st.markdown("**DISTRIBUIDORA**")
         st.markdown("---")
-        pages=["Dashboard","Productos","Venta / Ticket","Clientes","Proveedores","Caja","Ganancias y deudas","Logística","Reportes","Configuración"]
-        icons={"Dashboard":"📊","Productos":"📦","Venta / Ticket":"🧾","Clientes":"👥","Proveedores":"🏭","Caja":"💰","Ganancias y deudas":"📈","Logística":"🚚","Reportes":"📑","Configuración":"⚙️"}
+        pages=["Inicio","Productos","Venta / Ticket","Clientes","Proveedores","Caja","Ganancias y deudas","Logística","Reportes","Configuración"]
+        icons={"Inicio":"🏠","Productos":"📦","Venta / Ticket":"🧾","Clientes":"👥","Proveedores":"🏭","Caja":"💰","Ganancias y deudas":"📈","Logística":"🚚","Reportes":"📑","Configuración":"⚙️"}
         for p in pages:
             if st.button(f"{icons[p]} {p}", use_container_width=True): st.session_state.page=p; st.rerun()
         st.markdown("---")
@@ -394,28 +394,149 @@ def sidebar():
 # PÁGINAS
 # =========================
 def dashboard():
-    banner(); header("DON VALENTIN", "Panel general con stock, ventas, caja, ganancias y alertas.")
-    v=ventas_df(); it=items_df(); c=caja_df(); p=productos_df(True); cc=clientes_resumen()
-    hoy=today_str()
-    ventas_hoy=v[v["fecha"].str.startswith(hoy)] if not v.empty else pd.DataFrame()
-    gan_hoy=profit_between(datetime.now().date(), datetime.now().date())
+    banner(); header("Inicio", "Filtros generales y pantallazo completo por cliente o proveedor.")
+
+    cl = clientes_df()
+    pr = proveedores_df()
+    v = ventas_df()
+    it = items_df()
+    c = caja_df()
+    p = productos_df(True)
+    cc = clientes_resumen()
+    pres = proveedores_resumen()
+    pagos_cli = pagos_clientes_df()
+    pagos_prov = pagos_proveedores_df()
+    compras = compras_df()
+    log = logistica_df()
+    hoy = today_str()
+
+    # KPIs generales del día
+    ventas_hoy = v[v["fecha"].str.startswith(hoy)] if not v.empty else pd.DataFrame()
+    caja_hoy = c[c["fecha"].str.startswith(hoy)] if not c.empty else pd.DataFrame()
+    ingresos_hoy = caja_hoy[caja_hoy.tipo=="Ingreso"]["monto"].sum() if not caja_hoy.empty else 0
+    egresos_hoy = caja_hoy[caja_hoy.tipo=="Egreso"]["monto"].sum() if not caja_hoy.empty else 0
+    gan_hoy = profit_between(datetime.now().date(), datetime.now().date())
+
     c1,c2,c3,c4=st.columns(4)
     with c1: kpi("Venta del día", money(ventas_hoy["total"].sum() if not ventas_hoy.empty else 0), "Facturación diaria")
     with c2: kpi("Ganancia del día", money(gan_hoy), "Venta - costo")
-    with c3: kpi("Productos activos", str(len(p)), "Catálogo editable")
-    with c4: kpi("Clientes con deuda", str(len(cc[cc["Debe"]>0]) if not cc.empty else 0), "Cuenta corriente")
-    if not p.empty:
-        low=p[p["stock"]<=0]
-        if not low.empty: st.warning(f"⚠️ Hay {len(low)} productos con stock cero o negativo.")
-    if not cc.empty and not cc[cc["Alerta"].str.contains("⚠️")].empty:
-        st.error("⚠️ Hay clientes con deuda de más de 7 días.")
-    col1,col2=st.columns(2)
-    with col1:
-        if not p.empty: st.plotly_chart(fig_style(px.bar(p.head(15), x="nombre", y="stock", title="Stock real por producto")), use_container_width=True)
-    with col2:
-        if not it.empty:
-            top=it.groupby("producto_nombre",as_index=False)["total"].sum().sort_values("total",ascending=False).head(10)
-            st.plotly_chart(fig_style(px.bar(top,x="producto_nombre",y="total",title="Ventas por producto")), use_container_width=True)
+    with c3: kpi("Caja del día", money(ingresos_hoy-egresos_hoy), "Ingresos - egresos")
+    with c4: kpi("Productos activos", str(len(p)), "Catálogo editable")
+
+    with st.expander("🔎 Filtros generales", expanded=True):
+        f1,f2,f3=st.columns(3)
+        with f1:
+            tipo_vista = st.selectbox("Ver pantallazo de", ["Cliente", "Proveedor", "General"])
+        with f2:
+            cliente_id = None
+            if tipo_vista == "Cliente" and not cl.empty:
+                cl_labels = id_label(cl)
+                cliente_id = selected_int(st.selectbox("Seleccionar cliente", list(cl_labels.keys()), format_func=lambda x: cl_labels.get(str(x),str(x))))
+            elif tipo_vista == "Cliente":
+                st.info("Todavía no hay clientes cargados.")
+        with f3:
+            proveedor_id = None
+            if tipo_vista == "Proveedor" and not pr.empty:
+                pr_labels = id_label(pr)
+                proveedor_id = selected_int(st.selectbox("Seleccionar proveedor", list(pr_labels.keys()), format_func=lambda x: pr_labels.get(str(x),str(x))))
+            elif tipo_vista == "Proveedor":
+                st.info("Todavía no hay proveedores cargados.")
+
+    if tipo_vista == "Cliente" and cliente_id:
+        cliente_row = cl[cl.id==cliente_id].iloc[0]
+        resumen = cc[cc.id==cliente_id].iloc[0] if not cc.empty and not cc[cc.id==cliente_id].empty else None
+        st.subheader(f"👥 Pantallazo del cliente: {cliente_row.nombre}")
+        a,b,cx,d=st.columns(4)
+        fact = float(resumen.Facturado) if resumen is not None else 0
+        pag = float(resumen.Pagado) if resumen is not None else 0
+        debe = float(resumen.Debe) if resumen is not None else 0
+        dias = int(resumen["Días deuda"]) if resumen is not None else 0
+        with a: st.metric("Facturado", money(fact))
+        with b: st.metric("Pagado", money(pag))
+        with cx: st.metric("Debe", money(debe))
+        with d: st.metric("Días deuda", dias)
+        if debe>0 and dias>=7:
+            st.error("⚠️ Cliente con deuda de más de 7 días.")
+        elif debe>0:
+            st.warning("⚠️ Cliente con saldo pendiente.")
+        else:
+            st.success("Cuenta corriente al día.")
+
+        tv = v[v.cliente_id==cliente_id] if not v.empty else pd.DataFrame()
+        tp = pagos_cli[pagos_cli.cliente_id==cliente_id] if not pagos_cli.empty else pd.DataFrame()
+        tl = log[log.cliente_id==cliente_id] if not log.empty else pd.DataFrame()
+        titems = it[it.cliente==cliente_row.nombre] if not it.empty and "cliente" in it.columns else pd.DataFrame()
+        colA,colB=st.columns(2)
+        with colA:
+            st.markdown("### 🧾 Ventas / tickets")
+            if not tv.empty:
+                tv_show=tv.copy(); tv_show["Total $"]=tv_show.total.apply(money)
+                st.dataframe(tv_show[["fecha","ticket","metodo_pago","Total $","observaciones"]], use_container_width=True, hide_index=True)
+            else: st.info("Sin ventas registradas.")
+        with colB:
+            st.markdown("### 💵 Pagos del cliente")
+            if not tp.empty:
+                tp_show=tp.copy(); tp_show["Monto $"]=tp_show.monto.apply(money)
+                st.dataframe(tp_show[["fecha","Monto $","medio","observaciones"]], use_container_width=True, hide_index=True)
+            else: st.info("Sin pagos registrados.")
+        st.markdown("### 📦 Productos comprados")
+        if not titems.empty:
+            resumen_prod=titems.groupby("producto_nombre",as_index=False).agg(Cantidad=("cantidad_texto","count"),Total=("total","sum"),Costo=("costo_total","sum"))
+            resumen_prod["Ganancia"]=resumen_prod["Total"]-resumen_prod["Costo"]
+            resumen_prod["Total $"]=resumen_prod.Total.apply(money); resumen_prod["Ganancia $"]=resumen_prod.Ganancia.apply(money)
+            st.dataframe(resumen_prod[["producto_nombre","Cantidad","Total $","Ganancia $"]], use_container_width=True, hide_index=True)
+        else: st.info("Sin productos vendidos a este cliente.")
+        st.markdown("### 🚚 Visitas / entregas")
+        if not tl.empty:
+            st.dataframe(tl[["fecha","zona","direccion","detalle","estado"]], use_container_width=True, hide_index=True)
+        else: st.info("Sin visitas o entregas registradas.")
+
+    elif tipo_vista == "Proveedor" and proveedor_id:
+        proveedor_row = pr[pr.id==proveedor_id].iloc[0]
+        resumen = pres[pres.id==proveedor_id].iloc[0] if not pres.empty and not pres[pres.id==proveedor_id].empty else None
+        st.subheader(f"🏭 Pantallazo del proveedor: {proveedor_row.nombre}")
+        comprado = float(resumen.Comprado) if resumen is not None else 0
+        pagado = float(resumen.Pagado) if resumen is not None else 0
+        debe = float(resumen.Debe) if resumen is not None else 0
+        a,b,cx,d=st.columns(4)
+        with a: st.metric("Comprado", money(comprado))
+        with b: st.metric("Pagado", money(pagado))
+        with cx: st.metric("Debe", money(debe))
+        with d: st.metric("Compras", len(compras[compras.proveedor_id==proveedor_id]) if not compras.empty else 0)
+        if debe>0: st.warning("⚠️ Proveedor con saldo pendiente.")
+        else: st.success("Proveedor sin deuda pendiente.")
+        tc = compras[compras.proveedor_id==proveedor_id] if not compras.empty else pd.DataFrame()
+        tp = pagos_prov[pagos_prov.proveedor_id==proveedor_id] if not pagos_prov.empty else pd.DataFrame()
+        colA,colB=st.columns(2)
+        with colA:
+            st.markdown("### 📥 Compras al proveedor")
+            if not tc.empty:
+                tc_show=tc.copy(); tc_show["Costo $"]=tc_show.costo_total.apply(money); tc_show["Pagado $"]=tc_show.pagado.apply(money)
+                st.dataframe(tc_show[["fecha","producto","cantidad","unidad","Costo $","Pagado $","detalle"]], use_container_width=True, hide_index=True)
+            else: st.info("Sin compras registradas.")
+        with colB:
+            st.markdown("### 💸 Pagos al proveedor")
+            if not tp.empty:
+                tp_show=tp.copy(); tp_show["Monto $"]=tp_show.monto.apply(money)
+                st.dataframe(tp_show[["fecha","Monto $","medio","observaciones"]], use_container_width=True, hide_index=True)
+            else: st.info("Sin pagos registrados.")
+
+    else:
+        st.subheader("📊 Resumen general")
+        col1,col2=st.columns(2)
+        with col1:
+            if not p.empty:
+                st.plotly_chart(fig_style(px.bar(p.head(15), x="nombre", y="stock", title="Stock real por producto")), use_container_width=True)
+        with col2:
+            if not it.empty:
+                top=it.groupby("producto_nombre",as_index=False)["total"].sum().sort_values("total",ascending=False).head(10)
+                st.plotly_chart(fig_style(px.bar(top,x="producto_nombre",y="total",title="Ventas por producto")), use_container_width=True)
+        if not cc.empty:
+            st.markdown("### Clientes con deuda")
+            st.dataframe(cc[["Cliente","Facturado $","Pagado $","Debe $","Días deuda","Alerta"]].sort_values("Debe $",ascending=False), use_container_width=True, hide_index=True)
+        if not pres.empty:
+            st.markdown("### Proveedores")
+            st.dataframe(pres[["Proveedor","Comprado $","Pagado $","Debe $"]], use_container_width=True, hide_index=True)
 
 def productos_page():
     banner(); header("Productos", "Agregar, editar, eliminar, cambiar nombre, precios, costos y stock real.")
@@ -967,11 +1088,11 @@ def config_page():
 # ROUTER
 # =========================
 if "logged" not in st.session_state: st.session_state.logged=False
-if "page" not in st.session_state: st.session_state.page="Dashboard"
+if "page" not in st.session_state: st.session_state.page="Inicio"
 
 if not st.session_state.logged:
     login()
 else:
     sidebar()
-    pages={"Dashboard":dashboard,"Productos":productos_page,"Venta / Ticket":venta_page,"Clientes":clientes_page,"Proveedores":proveedores_page,"Caja":caja_page,"Ganancias y deudas":ganancias_page,"Logística":logistica_page,"Reportes":reportes_page,"Configuración":config_page}
+    pages={"Inicio":dashboard,"Productos":productos_page,"Venta / Ticket":venta_page,"Clientes":clientes_page,"Proveedores":proveedores_page,"Caja":caja_page,"Ganancias y deudas":ganancias_page,"Logística":logistica_page,"Reportes":reportes_page,"Configuración":config_page}
     pages[st.session_state.page]()
