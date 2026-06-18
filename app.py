@@ -1,689 +1,93 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-from datetime import datetime, timedelta
-import re
-import io
-from pathlib import Path
-import base64
+from datetime import datetime, date, timedelta
 import sqlite3
-import hashlib
+import io
+import base64
+from pathlib import Path
 
 st.set_page_config(page_title="DON VALENTIN", page_icon="🧀", layout="wide", initial_sidebar_state="expanded")
 
 APP_NAME = "DON VALENTIN"
-DEFAULT_USER = "admin"
-DEFAULT_PASS = "admin123"
-AUTH_DB = Path(__file__).parent / "don_valentin_auth.sqlite3"
-APP_DB = Path(__file__).parent / "don_valentin_data.sqlite3"
+DB_PATH = Path(__file__).parent / "don_valentin.db"
 DEFAULT_EXCEL = Path(__file__).parent / "lista_don_valentin.xlsx"
 MOZZARELLA_IMG = Path(__file__).parent / "assets" / "mozzarella_hero.png"
+
 try:
     MOZZARELLA_B64 = base64.b64encode(MOZZARELLA_IMG.read_bytes()).decode("utf-8") if MOZZARELLA_IMG.exists() else ""
 except Exception:
     MOZZARELLA_B64 = ""
-WHATSAPP_LINK = "https://wa.me/TUNUMERO?text=Hola,%20quiero%20solicitar%20acceso%20completo%20a%20DON%20VALENTIN"
 
 # =========================
-# USUARIO Y CONTRASEÑA
-# =========================
-def hash_password(password: str) -> str:
-    return hashlib.sha256(password.encode("utf-8")).hexdigest()
-
-def init_auth_db():
-    conn = sqlite3.connect(AUTH_DB)
-    cur = conn.cursor()
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS auth (
-            id INTEGER PRIMARY KEY CHECK (id = 1),
-            username TEXT NOT NULL,
-            password_hash TEXT NOT NULL
-        )
-    """)
-    cur.execute("SELECT COUNT(*) FROM auth")
-    if cur.fetchone()[0] == 0:
-        cur.execute(
-            "INSERT INTO auth (id, username, password_hash) VALUES (1, ?, ?)",
-            (DEFAULT_USER, hash_password(DEFAULT_PASS))
-        )
-    conn.commit()
-    conn.close()
-
-def get_auth_user():
-    init_auth_db()
-    conn = sqlite3.connect(AUTH_DB)
-    cur = conn.cursor()
-    cur.execute("SELECT username, password_hash FROM auth WHERE id = 1")
-    row = cur.fetchone()
-    conn.close()
-    return row if row else (DEFAULT_USER, hash_password(DEFAULT_PASS))
-
-def verify_login(username: str, password: str) -> bool:
-    saved_user, saved_hash = get_auth_user()
-    return username.strip() == saved_user and hash_password(password) == saved_hash
-
-def update_auth_user(new_username: str, new_password: str):
-    init_auth_db()
-    conn = sqlite3.connect(AUTH_DB)
-    cur = conn.cursor()
-    cur.execute(
-        "UPDATE auth SET username = ?, password_hash = ? WHERE id = 1",
-        (new_username.strip(), hash_password(new_password))
-    )
-    conn.commit()
-    conn.close()
-
-
-# =========================
-# BASE DE DATOS REAL: CLIENTES Y VENTAS
-# =========================
-def get_data_conn():
-    return sqlite3.connect(APP_DB)
-
-def init_data_db():
-    conn = get_data_conn()
-    cur = conn.cursor()
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS clientes (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            cliente TEXT NOT NULL UNIQUE,
-            tipo TEXT DEFAULT '',
-            zona TEXT DEFAULT '',
-            telefono TEXT DEFAULT '',
-            estado TEXT DEFAULT 'Activo',
-            observaciones TEXT DEFAULT '',
-            creado_en TEXT DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS ventas (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            fecha TEXT NOT NULL,
-            cliente TEXT NOT NULL,
-            producto TEXT NOT NULL,
-            modo TEXT NOT NULL,
-            cantidad TEXT NOT NULL,
-            total REAL NOT NULL,
-            metodo_pago TEXT NOT NULL,
-            ticket TEXT NOT NULL UNIQUE,
-            creado_en TEXT DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS ventas_items (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            ticket TEXT NOT NULL,
-            fecha TEXT NOT NULL,
-            cliente TEXT NOT NULL,
-            producto TEXT NOT NULL,
-            modo TEXT NOT NULL,
-            cantidad_texto TEXT NOT NULL,
-            gramos REAL DEFAULT 0,
-            unidades REAL DEFAULT 0,
-            cantidad_base REAL DEFAULT 0,
-            total REAL NOT NULL,
-            metodo_pago TEXT NOT NULL,
-            creado_en TEXT DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS proveedores (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            proveedor TEXT NOT NULL UNIQUE,
-            telefono TEXT DEFAULT '',
-            zona TEXT DEFAULT '',
-            observaciones TEXT DEFAULT '',
-            creado_en TEXT DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS compras (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            fecha TEXT NOT NULL,
-            proveedor TEXT NOT NULL,
-            producto TEXT NOT NULL,
-            cantidad REAL NOT NULL,
-            unidad TEXT NOT NULL,
-            costo_total REAL NOT NULL,
-            costo_unitario REAL NOT NULL,
-            detalle TEXT DEFAULT '',
-            creado_en TEXT DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS movimientos_caja (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            fecha TEXT NOT NULL,
-            tipo TEXT NOT NULL,
-            concepto TEXT NOT NULL,
-            monto REAL NOT NULL,
-            medio TEXT DEFAULT '',
-            observaciones TEXT DEFAULT '',
-            creado_en TEXT DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS producto_stock (
-            producto TEXT PRIMARY KEY,
-            stock REAL DEFAULT 0,
-            unidad TEXT DEFAULT 'kg',
-            actualizado_en TEXT DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS cliente_pagos (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            fecha TEXT NOT NULL,
-            cliente TEXT NOT NULL,
-            monto REAL NOT NULL,
-            medio TEXT DEFAULT '',
-            observaciones TEXT DEFAULT '',
-            creado_en TEXT DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS tickets_stock_descontado (
-            ticket TEXT PRIMARY KEY,
-            fecha TEXT NOT NULL
-        )
-    """)
-    defaults = [
-        ("Pizzería La Esquina", "Pizzería", "Centro", "11 2345-6789", "Activo", ""),
-        ("Rotisería Avenida", "Rotisería", "Norte", "11 3456-7890", "Activo", ""),
-        ("Almacén Don Luis", "Almacén", "Oeste", "11 4567-8901", "Activo", ""),
-        ("Casa de Comidas Norte", "Comidas", "Norte", "11 5678-9012", "Activo", ""),
-        ("Panadería Centro", "Panadería", "Centro", "11 6789-0123", "Activo", ""),
-    ]
-    for row in defaults:
-        cur.execute("""
-            INSERT OR IGNORE INTO clientes (cliente, tipo, zona, telefono, estado, observaciones)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, row)
-    conn.commit()
-    conn.close()
-
-def load_clientes_df():
-    init_data_db()
-    conn = get_data_conn()
-    df = pd.read_sql_query(
-        "SELECT cliente AS Cliente, tipo AS Tipo, zona AS Zona, telefono AS Teléfono, estado AS Estado, observaciones AS Observaciones FROM clientes ORDER BY cliente",
-        conn
-    )
-    conn.close()
-    return df
-
-def get_client_names():
-    df = load_clientes_df()
-    if df.empty:
-        return ["Cliente"]
-    return df["Cliente"].dropna().astype(str).tolist()
-
-def add_cliente_db(cliente, tipo, zona, telefono, estado, observaciones):
-    init_data_db()
-    conn = get_data_conn()
-    cur = conn.cursor()
-    cur.execute("""
-        INSERT OR REPLACE INTO clientes (cliente, tipo, zona, telefono, estado, observaciones)
-        VALUES (?, ?, ?, ?, ?, ?)
-    """, (cliente.strip(), tipo, zona.strip() or "Sin zona", telefono.strip() or "-", estado, observaciones.strip() if observaciones else ""))
-    conn.commit()
-    conn.close()
-
-def save_venta_db(venta):
-    init_data_db()
-    conn = get_data_conn()
-    cur = conn.cursor()
-    cur.execute("""
-        INSERT OR REPLACE INTO ventas (fecha, cliente, producto, modo, cantidad, total, metodo_pago, ticket)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    """, (venta["Fecha"], venta["Cliente"], venta["Producto"], venta["Modo"], venta["Cantidad"], float(venta["Total"]), venta["Método de pago"], venta["Ticket"]))
-    conn.commit()
-    conn.close()
-
-def load_ventas_df():
-    init_data_db()
-    conn = get_data_conn()
-    df = pd.read_sql_query(
-        "SELECT fecha AS Fecha, cliente AS Cliente, producto AS Producto, modo AS Modo, cantidad AS Cantidad, total AS Total, metodo_pago AS 'Método de pago', ticket AS Ticket FROM ventas ORDER BY id DESC",
-        conn
-    )
-    conn.close()
-    if not df.empty:
-        df["Total $"] = df["Total"].apply(money)
-    return df
-
-def save_venta_item_db(item):
-    init_data_db()
-    conn = get_data_conn()
-    cur = conn.cursor()
-    cur.execute("""
-        INSERT INTO ventas_items (ticket, fecha, cliente, producto, modo, cantidad_texto, gramos, unidades, cantidad_base, total, metodo_pago)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (
-        item["Ticket"], item["Fecha"], item["Cliente"], item["Producto"], item["Modo"], item["Cantidad"],
-        float(item.get("Gramos", 0) or 0), float(item.get("Unidades", 0) or 0), float(item.get("Cantidad base", 0) or 0),
-        float(item["Total"]), item["Método de pago"]
-    ))
-    conn.commit()
-    conn.close()
-
-def load_ventas_items_df():
-    init_data_db()
-    conn = get_data_conn()
-    df = pd.read_sql_query("""
-        SELECT fecha AS Fecha, cliente AS Cliente, producto AS Producto, modo AS Modo, cantidad_texto AS Cantidad,
-               gramos AS Gramos, unidades AS Unidades, cantidad_base AS 'Cantidad base', total AS Total,
-               metodo_pago AS 'Método de pago', ticket AS Ticket
-        FROM ventas_items ORDER BY id DESC
-    """, conn)
-    conn.close()
-    if not df.empty:
-        df["Total $"] = df["Total"].apply(money)
-    return df
-
-def add_proveedor_db(proveedor, telefono, zona, observaciones):
-    init_data_db()
-    conn = get_data_conn()
-    cur = conn.cursor()
-    cur.execute("""
-        INSERT OR REPLACE INTO proveedores (proveedor, telefono, zona, observaciones)
-        VALUES (?, ?, ?, ?)
-    """, (proveedor.strip(), telefono.strip() or "-", zona.strip() or "Sin zona", observaciones.strip() if observaciones else ""))
-    conn.commit()
-    conn.close()
-
-def load_proveedores_df():
-    init_data_db()
-    conn = get_data_conn()
-    df = pd.read_sql_query("SELECT proveedor AS Proveedor, telefono AS Teléfono, zona AS Zona, observaciones AS Observaciones FROM proveedores ORDER BY proveedor", conn)
-    conn.close()
-    return df
-
-def get_provider_names():
-    df = load_proveedores_df()
-    return df["Proveedor"].dropna().astype(str).tolist() if not df.empty else ["Molino Cañuelas"]
-
-def save_compra_db(fecha, proveedor, producto, cantidad, unidad, costo_total, detalle):
-    cantidad = float(cantidad or 0)
-    costo_total = float(costo_total or 0)
-    costo_unitario = costo_total / cantidad if cantidad else 0
-    init_data_db()
-    conn = get_data_conn()
-    cur = conn.cursor()
-    cur.execute("""
-        INSERT INTO compras (fecha, proveedor, producto, cantidad, unidad, costo_total, costo_unitario, detalle)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    """, (fecha, proveedor, producto, cantidad, unidad, costo_total, costo_unitario, detalle or ""))
-    conn.commit()
-    conn.close()
-
-def load_compras_df():
-    init_data_db()
-    conn = get_data_conn()
-    df = pd.read_sql_query("""
-        SELECT fecha AS Fecha, proveedor AS Proveedor, producto AS Producto, cantidad AS Cantidad, unidad AS Unidad,
-               costo_total AS 'Costo total', costo_unitario AS 'Costo unitario', detalle AS Detalle
-        FROM compras ORDER BY id DESC
-    """, conn)
-    conn.close()
-    if not df.empty:
-        df["Costo total $"] = df["Costo total"].apply(money)
-        df["Costo unitario $"] = df["Costo unitario"].apply(money)
-    return df
-
-def save_movimiento_caja(fecha, tipo, concepto, monto, medio, observaciones):
-    init_data_db()
-    conn = get_data_conn()
-    cur = conn.cursor()
-    cur.execute("""
-        INSERT INTO movimientos_caja (fecha, tipo, concepto, monto, medio, observaciones)
-        VALUES (?, ?, ?, ?, ?, ?)
-    """, (fecha, tipo, concepto, float(monto or 0), medio, observaciones or ""))
-    conn.commit()
-    conn.close()
-
-def load_caja_df():
-    init_data_db()
-    conn = get_data_conn()
-    df = pd.read_sql_query("""
-        SELECT fecha AS Fecha, tipo AS Tipo, concepto AS Concepto, monto AS Monto, medio AS Medio, observaciones AS Observaciones
-        FROM movimientos_caja ORDER BY id DESC
-    """, conn)
-    conn.close()
-    if not df.empty:
-        df["Monto $"] = df["Monto"].apply(money)
-    return df
-
-def costo_promedio_por_producto():
-    compras = load_compras_df()
-    if compras.empty:
-        return {}
-    costos = {}
-    for producto, g in compras.groupby("Producto"):
-        total_costo = g["Costo total"].sum()
-        total_cantidad = g["Cantidad"].sum()
-        costos[producto] = total_costo / total_cantidad if total_cantidad else 0
-    return costos
-
-def save_product_stock(producto, stock, unidad):
-    init_data_db()
-    conn = get_data_conn()
-    cur = conn.cursor()
-    cur.execute("""
-        INSERT OR REPLACE INTO producto_stock (producto, stock, unidad, actualizado_en)
-        VALUES (?, ?, ?, ?)
-    """, (producto, float(stock or 0), unidad, datetime.now().strftime("%d/%m/%Y %H:%M")))
-    conn.commit()
-    conn.close()
-
-
-def load_product_stock_df():
-    init_data_db()
-    conn = get_data_conn()
-    df = pd.read_sql_query("SELECT producto AS Producto, stock AS 'Stock real', unidad AS Unidad, actualizado_en AS 'Actualizado' FROM producto_stock ORDER BY producto", conn)
-    conn.close()
-    return df
-
-
-def get_stock_map():
-    df = load_product_stock_df()
-    if df.empty:
-        return {}
-    return {r["Producto"]: {"stock": float(r["Stock real"] or 0), "unidad": r["Unidad"]} for _, r in df.iterrows()}
-
-
-def decrement_stock_for_ticket(ticket):
-    init_data_db()
-    ticket_num = ticket.get("Número") if isinstance(ticket, dict) else str(ticket)
-    if not ticket_num:
-        return "Sin número de ticket."
-    conn = get_data_conn()
-    cur = conn.cursor()
-    cur.execute("SELECT ticket FROM tickets_stock_descontado WHERE ticket = ?", (ticket_num,))
-    if cur.fetchone():
-        conn.close()
-        return "El stock de este ticket ya fue descontado anteriormente."
-    items = ticket.get("Items", []) if isinstance(ticket, dict) else []
-    for item in items:
-        producto = item.get("Producto", "")
-        cantidad_base = float(item.get("Cantidad base", 0) or 0)
-        if cantidad_base <= 0:
-            cantidad_base = float(item.get("Unidades", 0) or 0)
-        if producto and cantidad_base > 0:
-            cur.execute("SELECT stock, unidad FROM producto_stock WHERE producto = ?", (producto,))
-            row = cur.fetchone()
-            if row:
-                nuevo_stock = float(row[0] or 0) - cantidad_base
-                cur.execute("UPDATE producto_stock SET stock = ?, actualizado_en = ? WHERE producto = ?", (nuevo_stock, datetime.now().strftime("%d/%m/%Y %H:%M"), producto))
-            else:
-                cur.execute("INSERT INTO producto_stock (producto, stock, unidad, actualizado_en) VALUES (?, ?, ?, ?)", (producto, -cantidad_base, "kg/u", datetime.now().strftime("%d/%m/%Y %H:%M")))
-    cur.execute("INSERT OR REPLACE INTO tickets_stock_descontado (ticket, fecha) VALUES (?, ?)", (ticket_num, datetime.now().strftime("%d/%m/%Y %H:%M")))
-    conn.commit()
-    conn.close()
-    return "Stock actualizado correctamente."
-
-
-def save_cliente_pago(fecha, cliente, monto, medio, observaciones):
-    init_data_db()
-    conn = get_data_conn()
-    cur = conn.cursor()
-    cur.execute("""
-        INSERT INTO cliente_pagos (fecha, cliente, monto, medio, observaciones)
-        VALUES (?, ?, ?, ?, ?)
-    """, (fecha, cliente, float(monto or 0), medio, observaciones or ""))
-    conn.commit()
-    conn.close()
-
-
-def load_cliente_pagos_df():
-    init_data_db()
-    conn = get_data_conn()
-    df = pd.read_sql_query("SELECT fecha AS Fecha, cliente AS Cliente, monto AS Monto, medio AS Medio, observaciones AS Observaciones FROM cliente_pagos ORDER BY id DESC", conn)
-    conn.close()
-    if not df.empty:
-        df["Monto $"] = df["Monto"].apply(money)
-    return df
-
-
-def parse_fecha(fecha):
-    for fmt in ("%d/%m/%Y %H:%M", "%d/%m/%Y", "%Y-%m-%d %H:%M:%S"):
-        try:
-            return datetime.strptime(str(fecha), fmt)
-        except Exception:
-            pass
-    return None
-
-
-def is_today(fecha):
-    dt = parse_fecha(fecha)
-    return dt is not None and dt.date() == datetime.now().date()
-
-
-def clientes_facturacion_df():
-    ventas = load_ventas_df()
-    pagos = load_cliente_pagos_df()
-    clientes = load_clientes_df()
-    nombres = set(clientes["Cliente"].tolist()) if not clientes.empty else set()
-    if not ventas.empty:
-        nombres.update(ventas["Cliente"].dropna().astype(str).tolist())
-    if not pagos.empty:
-        nombres.update(pagos["Cliente"].dropna().astype(str).tolist())
-    rows = []
-    now = datetime.now()
-    for cliente in sorted(nombres):
-        v = ventas[ventas["Cliente"] == cliente] if not ventas.empty else pd.DataFrame()
-        p = pagos[pagos["Cliente"] == cliente] if not pagos.empty else pd.DataFrame()
-        facturado = float(v["Total"].sum()) if not v.empty else 0.0
-        pagado_auto = float(v[v["Método de pago"] != "Cuenta corriente"]["Total"].sum()) if not v.empty and "Método de pago" in v else 0.0
-        pagado_manual = float(p["Monto"].sum()) if not p.empty else 0.0
-        pagado = pagado_auto + pagado_manual
-        deuda = max(facturado - pagado, 0.0)
-        fechas_deuda = []
-        if not v.empty:
-            for _, r in v[v["Método de pago"] == "Cuenta corriente"].iterrows():
-                dt = parse_fecha(r["Fecha"])
-                if dt:
-                    fechas_deuda.append(dt)
-        ultima_deuda = max(fechas_deuda).strftime("%d/%m/%Y") if fechas_deuda else "-"
-        dias = max([(now - d).days for d in fechas_deuda], default=0)
-        alerta = "⚠️ Más de 7 días sin pagar" if deuda > 0 and dias >= 7 else "OK"
-        rows.append({
-            "Cliente": cliente,
-            "Facturado": facturado,
-            "Facturado $": money(facturado),
-            "Pagado": pagado,
-            "Pagado $": money(pagado),
-            "Debe": deuda,
-            "Debe $": money(deuda),
-            "Última deuda": ultima_deuda,
-            "Días deuda": dias,
-            "Alerta": alerta,
-        })
-    return pd.DataFrame(rows)
-
-
-init_data_db()
-
-# =========================
-# ESTADO
-# =========================
-if "logged" not in st.session_state:
-    st.session_state.logged = False
-if "current_user" not in st.session_state:
-    st.session_state.current_user = ""
-if "page" not in st.session_state:
-    st.session_state.page = "Dashboard"
-if "ventas_demo" not in st.session_state:
-    st.session_state.ventas_demo = []
-if "last_ticket" not in st.session_state:
-    st.session_state.last_ticket = None
-if "venta_cart" not in st.session_state:
-    st.session_state.venta_cart = []
-if "clientes_demo" not in st.session_state:
-    st.session_state.clientes_demo = get_client_names()
-
-# =========================
-# ESTILO NEGRO + DORADO
-# =========================
-st.markdown("""
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
-html, body, [class*="css"] {font-family:'Inter',sans-serif;}
-.stApp {background: radial-gradient(circle at top left, rgba(212,175,55,.18), transparent 30%), linear-gradient(135deg,#050505 0%,#111 55%,#050505 100%); color:#F8F1D7;}
-section[data-testid="stSidebar"]{background:linear-gradient(180deg,#040404,#111);border-right:1px solid rgba(212,175,55,.30);}
-section[data-testid="stSidebar"] *{color:#F8F1D7!important;}
-[data-testid="stHeader"]{background:rgba(5,5,5,0);}
-.block-container{padding-top:1.4rem; max-width:1320px;}
-.hero{background:linear-gradient(135deg,rgba(20,20,20,.98),rgba(5,5,5,.98));border:1px solid rgba(245,213,106,.34);border-radius:30px;padding:30px 34px;margin-bottom:22px;box-shadow:0 20px 60px rgba(0,0,0,.55);}
-.hero h1{color:#F5D56A;font-size:42px;font-weight:900;margin:0;letter-spacing:-.6px;}
-.hero p{color:#d8c982;font-size:16px;font-weight:700;margin:8px 0 0 0;}
-.demo-banner{background:linear-gradient(90deg,rgba(212,175,55,.24),rgba(245,213,106,.09));border:1px solid rgba(245,213,106,.45);color:#FFE89A;padding:14px 18px;border-radius:18px;font-weight:800;margin-bottom:18px;box-shadow:0 12px 32px rgba(212,175,55,.10);}
-.card{background:linear-gradient(180deg,rgba(22,22,22,.96),rgba(10,10,10,.96));border:1px solid rgba(212,175,55,.22);border-radius:24px;padding:22px;box-shadow:0 18px 44px rgba(0,0,0,.44);transition:.22s ease;margin-bottom:16px;}
-.card:hover{transform:translateY(-2px);border-color:rgba(245,213,106,.44);}
-.kpi-label{color:#bba762;font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.4px;}
-.kpi-value{color:#F5D56A;font-size:30px;font-weight:900;margin-top:4px;}
-.kpi-note{color:#e7dca8;font-size:13px;margin-top:6px;}
-.locked-box{background:rgba(245,213,106,.08);border:1px dashed rgba(245,213,106,.45);color:#FFE89A;border-radius:18px;padding:14px 16px;margin:12px 0;font-weight:700;}
-.success-box{background:rgba(34,197,94,.10);border:1px solid rgba(34,197,94,.35);color:#bbf7d0;border-radius:18px;padding:14px 16px;margin:12px 0;font-weight:700;}
-.ticket-box{background:#fff;color:#111;border-radius:18px;padding:18px;border:2px dashed #B98A1E;font-family:monospace;box-shadow:0 14px 38px rgba(0,0,0,.35);}
-.ticket-box h3{color:#111;text-align:center;margin:0 0 8px 0;}
-.ticket-line{border-top:1px dashed #555;margin:8px 0;}
-.stButton>button, .stDownloadButton>button{background:linear-gradient(135deg,#B98A1E,#F5D56A)!important;color:#111!important;border:0!important;border-radius:14px!important;font-weight:900!important;padding:12px 18px!important;box-shadow:0 12px 28px rgba(212,175,55,.18)!important;}
-.stDownloadButton>button:hover, .stButton>button:hover{filter:brightness(1.05);transform:translateY(-1px);}
-.stButton>button:disabled{background:#2b2b2b!important;color:#807244!important;border:1px solid rgba(245,213,106,.18)!important;}
-.login-shell{min-height:88vh;display:flex;align-items:center;justify-content:center;}
-.login-card{background:radial-gradient(circle at 50% 7%,rgba(245,213,106,.20),transparent 36%),linear-gradient(180deg,rgba(22,22,22,.99),rgba(4,4,4,.99));border:1px solid rgba(245,213,106,.38);border-radius:34px;padding:38px 42px 34px 42px;text-align:center;box-shadow:0 30px 90px rgba(0,0,0,.78), 0 0 80px rgba(212,175,55,.08);margin-bottom:18px;}
-.mozzarella-wrap{height:185px;display:flex;align-items:center;justify-content:center;margin-bottom:2px;filter:drop-shadow(0 20px 36px rgba(212,175,55,.28));}
-.mozzarella{width:210px;height:130px;border-radius:56% 44% 52% 48% / 58% 48% 52% 42%;background:radial-gradient(circle at 34% 27%,#fffef9 0%,#fff4cc 30%,#e7d09a 66%,#b98a1e 100%);box-shadow:0 24px 60px rgba(245,213,106,.24), inset -20px -15px 30px rgba(73,51,12,.28), inset 22px 18px 30px rgba(255,255,255,.86);position:relative;transform:rotate(-3deg);}
-.mozzarella:before{content:"";position:absolute;width:54px;height:32px;border-radius:50%;background:linear-gradient(135deg,#1f8f3a,#8ce99a);left:-22px;bottom:22px;transform:rotate(-28deg);box-shadow:48px -18px 0 -9px #37b24d, 30px 12px 20px rgba(0,0,0,.18);}
-.mozzarella:after{content:"• • •";position:absolute;top:25px;left:68px;color:#755719;font-size:22px;letter-spacing:9px;opacity:.48;}
-.brand-word{font-size:48px;font-weight:900;color:#F5D56A;letter-spacing:.8px;text-shadow:0 8px 28px rgba(245,213,106,.18);line-height:1;}
-.brand-subline{display:flex;align-items:center;gap:16px;justify-content:center;margin-top:18px;color:#F8F1D7;font-size:18px;font-weight:900;letter-spacing:10px;}
-.brand-subline:before,.brand-subline:after{content:"";height:1px;width:74px;background:linear-gradient(90deg,transparent,#F5D56A);opacity:.8;}
-.brand-subline:after{background:linear-gradient(90deg,#F5D56A,transparent);}
-.stTextInput input,.stNumberInput input,.stSelectbox div[data-baseweb="select"],.stTextArea textarea{background:#111!important;border:1px solid rgba(245,213,106,.35)!important;color:#F8F1D7!important;border-radius:14px!important;min-height:50px!important;}
-.stTextInput input:focus{box-shadow:0 0 0 1px rgba(245,213,106,.50),0 0 24px rgba(245,213,106,.10)!important;}
-div[data-testid="stLinkButton"] a{background:linear-gradient(135deg,#B98A1E,#F5D56A)!important;color:#111!important;border:0!important;border-radius:14px!important;font-weight:900!important;padding:12px 18px!important;box-shadow:0 12px 28px rgba(212,175,55,.18)!important;text-decoration:none!important;width:100%!important;text-align:center!important;}
-
-[data-testid="stMetric"]{background:linear-gradient(180deg,rgba(22,22,22,.95),rgba(10,10,10,.95));border:1px solid rgba(212,175,55,.22);border-radius:20px;padding:18px;}
-hr{border:0;border-top:1px solid rgba(245,213,106,.18);}
-
-/* Ajuste pedido por cliente: textos grises/secondary en dorado legible */
-p, span, label, .stMarkdown, .stCaption, [data-testid="stCaptionContainer"], [data-testid="stCaptionContainer"] p,
-[data-testid="stMarkdownContainer"] p, .stSelectbox label, .stTextInput label, .stNumberInput label, .stTextArea label,
-[data-testid="stWidgetLabel"], [data-testid="stWidgetLabel"] p, .css-1dp5vir, .css-10trblm {
-    color:#E7DCA8 !important;
-}
-small, .caption, .st-emotion-cache-1vbkxwb, .st-emotion-cache-16idsys p {
-    color:#F5D56A !important;
-}
-.stInfo, .stWarning, .stSuccess, .stAlert { color:#F8F1D7 !important; }
-
-</style>
-""", unsafe_allow_html=True)
-
-
-# =========================
-# AJUSTE LOGIN PREMIUM COMPACTO
+# ESTILO
 # =========================
 st.markdown(f"""
 <style>
-/* Login compacto: todo visible sin usar rueda */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+html, body, [class*="css"] {{font-family:'Inter',sans-serif;}}
 .stApp {{
     background:
-        linear-gradient(180deg, rgba(0,0,0,.82), rgba(0,0,0,.90)),
-        radial-gradient(circle at 18% 82%, rgba(64,120,45,.28), transparent 20%),
-        radial-gradient(circle at 84% 78%, rgba(64,120,45,.24), transparent 18%),
-        radial-gradient(circle at 50% 15%, rgba(245,213,106,.17), transparent 30%),
+        linear-gradient(180deg, rgba(0,0,0,.86), rgba(0,0,0,.92)),
+        radial-gradient(circle at 18% 82%, rgba(64,120,45,.26), transparent 20%),
+        radial-gradient(circle at 84% 78%, rgba(64,120,45,.22), transparent 18%),
+        radial-gradient(circle at 50% 15%, rgba(245,213,106,.15), transparent 30%),
         url("data:image/png;base64,{MOZZARELLA_B64}");
     background-size: cover;
     background-position: center;
     background-attachment: fixed;
+    color:#F8F1D7;
 }}
-.block-container {{
-    padding-top: .45rem !important;
-    padding-bottom: .25rem !important;
-}}
-.login-shell {{
-    min-height: auto !important;
-    display: flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-    padding: 0 !important;
-    margin: 0 auto !important;
-}}
-.premium-login-card {{
-    width: min(620px, 92vw) !important;
-    border-radius: 34px !important;
-    padding: 18px 24px 22px !important;
-    margin: 0 auto 10px !important;
-    background: linear-gradient(180deg, rgba(10,10,10,.78), rgba(4,4,4,.94)) !important;
-    backdrop-filter: blur(8px) !important;
-    border: 1px solid rgba(245,213,106,.58) !important;
-    box-shadow: 0 28px 95px rgba(0,0,0,.78), 0 0 95px rgba(212,175,55,.18) !important;
-}}
-.food-hero {{
-    width: 100% !important;
-    height: 205px !important;
-    object-fit: cover !important;
-    object-position: center 42% !important;
-    border-radius: 26px !important;
-    margin-bottom: 14px !important;
-}}
-.brand-word {{
-    font-size: clamp(42px, 5vw, 58px) !important;
-    line-height: .9 !important;
-}}
-.brand-subline {{
-    font-size: 18px !important;
-    letter-spacing: 12px !important;
-    margin-top: 14px !important;
-}}
-.brand-subline:before,.brand-subline:after {{
-    width: 74px !important;
-}}
-.login-form-wrap {{
-    width: min(620px, 92vw) !important;
-    margin: 0 auto !important;
-}}
-.login-form-wrap .stTextInput {{
-    margin-bottom: .35rem !important;
-}}
-.login-form-wrap .stTextInput input {{
-    height: 48px !important;
-    min-height: 48px !important;
-    border-radius: 14px !important;
-    font-size: 16px !important;
-}}
-.login-form-wrap .stButton>button {{
-    height: 54px !important;
-    border-radius: 16px !important;
-    font-size: 16px !important;
-    margin-top: .15rem !important;
-}}
-.login-form-wrap a {{
-    height: 50px !important;
-    min-height: 50px !important;
-    border-radius: 15px !important;
-}}
-/* Oculta espacios extra del login */
-div[data-testid="stVerticalBlock"]:has(.login-shell) {{
-    gap: .35rem !important;
-}}
-@media (max-height: 720px) {{
-    .food-hero {{ height: 170px !important; }}
-    .premium-login-card {{ padding: 14px 22px 16px !important; }}
-    .brand-word {{ font-size: 42px !important; }}
-    .brand-subline {{ font-size: 14px !important; margin-top: 10px !important; }}
-    .login-form-wrap .stTextInput input {{ height: 44px !important; min-height: 44px !important; }}
-    .login-form-wrap .stButton>button {{ height: 48px !important; }}
-}}
+section[data-testid="stSidebar"]{{background:linear-gradient(180deg,#040404,#111);border-right:1px solid rgba(212,175,55,.30);}}
+section[data-testid="stSidebar"] *{{color:#F8F1D7!important;}}
+[data-testid="stHeader"]{{background:rgba(5,5,5,0);}}
+.block-container{{padding-top:1rem; max-width:1380px;}}
+.hero{{background:linear-gradient(135deg,rgba(20,20,20,.98),rgba(5,5,5,.98));border:1px solid rgba(245,213,106,.34);border-radius:28px;padding:26px 30px;margin-bottom:18px;box-shadow:0 20px 60px rgba(0,0,0,.55);}}
+.hero h1{{color:#F5D56A;font-size:38px;font-weight:900;margin:0;letter-spacing:-.6px;}}
+.hero p{{color:#E7DCA8;font-size:15px;font-weight:700;margin:8px 0 0 0;}}
+.card{{background:linear-gradient(180deg,rgba(22,22,22,.96),rgba(10,10,10,.96));border:1px solid rgba(212,175,55,.22);border-radius:22px;padding:20px;box-shadow:0 16px 38px rgba(0,0,0,.42);margin-bottom:16px;}}
+.card:hover{{border-color:rgba(245,213,106,.45);}}
+.kpi-label{{color:#bba762;font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.4px;}}
+.kpi-value{{color:#F5D56A;font-size:28px;font-weight:900;margin-top:4px;}}
+.kpi-note{{color:#E7DCA8;font-size:13px;margin-top:6px;}}
+.success-box{{background:rgba(34,197,94,.10);border:1px solid rgba(34,197,94,.35);color:#bbf7d0;border-radius:16px;padding:14px 16px;margin:12px 0;font-weight:700;}}
+.warn-box{{background:rgba(245,213,106,.08);border:1px solid rgba(245,213,106,.35);color:#FFE89A;border-radius:16px;padding:14px 16px;margin:12px 0;font-weight:700;}}
+.ticket-box{{background:#fff;color:#111;border-radius:18px;padding:18px;border:2px dashed #B98A1E;font-family:monospace;box-shadow:0 14px 38px rgba(0,0,0,.35);}}
+.ticket-box h3{{color:#111;text-align:center;margin:0 0 8px 0;}}
+.ticket-line{{border-top:1px dashed #555;margin:8px 0;}}
+.stButton>button, .stDownloadButton>button{{background:linear-gradient(135deg,#B98A1E,#F5D56A)!important;color:#111!important;border:0!important;border-radius:14px!important;font-weight:900!important;padding:12px 18px!important;box-shadow:0 12px 28px rgba(212,175,55,.18)!important;}}
+.stButton>button:disabled{{background:#2b2b2b!important;color:#807244!important;border:1px solid rgba(245,213,106,.18)!important;}}
+.stTextInput input,.stNumberInput input,.stSelectbox div[data-baseweb="select"],.stTextArea textarea,.stDateInput input{{background:#111!important;border:1px solid rgba(245,213,106,.35)!important;color:#F8F1D7!important;border-radius:14px!important;min-height:44px!important;}}
+p, span, label, .stMarkdown, .stCaption, [data-testid="stCaptionContainer"], [data-testid="stMarkdownContainer"] p, [data-testid="stWidgetLabel"] p {{color:#E7DCA8 !important;}}
+[data-testid="stMetric"]{{background:linear-gradient(180deg,rgba(22,22,22,.95),rgba(10,10,10,.95));border:1px solid rgba(212,175,55,.22);border-radius:18px;padding:16px;}}
+hr{{border:0;border-top:1px solid rgba(245,213,106,.18);}}
+.premium-login-card{{width:min(620px,92vw);border-radius:34px;padding:18px 24px 22px;margin:0 auto 10px;background:linear-gradient(180deg,rgba(10,10,10,.78),rgba(4,4,4,.94));backdrop-filter:blur(8px);border:1px solid rgba(245,213,106,.58);box-shadow:0 28px 95px rgba(0,0,0,.78),0 0 95px rgba(212,175,55,.18);text-align:center;}}
+.food-hero{{width:100%;height:190px;object-fit:cover;object-position:center 42%;border-radius:26px;margin-bottom:14px;}}
+.brand-word{{font-size:50px;font-weight:900;color:#F5D56A;letter-spacing:.8px;text-shadow:0 8px 28px rgba(245,213,106,.18);line-height:.95;}}
+.brand-subline{{display:flex;align-items:center;gap:16px;justify-content:center;margin-top:14px;color:#F8F1D7;font-size:18px;font-weight:900;letter-spacing:12px;}}
+.brand-subline:before,.brand-subline:after{{content:"";height:1px;width:74px;background:linear-gradient(90deg,transparent,#F5D56A);opacity:.8;}}
+.brand-subline:after{{background:linear-gradient(90deg,#F5D56A,transparent);}}
 </style>
 """, unsafe_allow_html=True)
 
 # =========================
-# FUNCIONES DE DATOS
+# BASE DE DATOS
 # =========================
+def conn():
+    return sqlite3.connect(DB_PATH, check_same_thread=False)
+
+def q(sql, params=(), fetch=False):
+    with conn() as c:
+        cur = c.cursor()
+        cur.execute(sql, params)
+        c.commit()
+        if fetch:
+            return cur.fetchall()
+
+def df_query(sql, params=()):
+    with conn() as c:
+        return pd.read_sql_query(sql, c, params=params)
+
 def money(x):
     try:
         return "$ {:,.0f}".format(float(x)).replace(",", ".")
@@ -691,768 +95,467 @@ def money(x):
         return "$ 0"
 
 def to_num(x):
-    if pd.isna(x):
-        return None
-    if isinstance(x, (int, float)):
-        return float(x)
+    if pd.isna(x): return None
+    if isinstance(x, (int, float)): return float(x)
     s = str(x).strip().replace("$", "").replace(".", "").replace(",", ".")
-    if not s or "NO STOCK" in s.upper() or "XXXX" in s.upper():
-        return None
+    if not s or "NO STOCK" in s.upper() or "XXXX" in s.upper(): return None
+    try: return float(s)
+    except Exception: return None
+
+def parse_price_excel(path):
     try:
-        return float(s)
+        raw = pd.read_excel(path, sheet_name=0, header=None, engine="openpyxl")
     except Exception:
-        return None
-
-def guess_category_row(name, unit_price, kg_price):
-    if pd.isna(name):
-        return False
-    txt = str(name).strip()
-    if not txt:
-        return False
-    return unit_price is None and kg_price is None and len(txt) < 35
-
-def parse_price_excel(file_obj):
-    if isinstance(file_obj, (bytes, bytearray)):
-        file_obj = io.BytesIO(file_obj)
-    else:
-        try:
-            file_obj.seek(0)
-        except Exception:
-            pass
-    raw = pd.read_excel(file_obj, sheet_name=0, header=None, engine="openpyxl")
+        return pd.DataFrame()
     productos = []
     blocks = [(0, 6, 8), (9, 15, 17)]
     for name_col, unit_col, kg_col in blocks:
         categoria = "General"
         for _, row in raw.iterrows():
             name = row.get(name_col, None)
-            if pd.isna(name):
-                continue
+            if pd.isna(name): continue
             nombre = str(name).strip()
-            if not nombre or "whatsapp" in nombre.lower() or "lista de precios" in nombre.lower():
-                continue
+            if not nombre or "whatsapp" in nombre.lower() or "lista de precios" in nombre.lower(): continue
             precio_und = to_num(row.get(unit_col, None))
             precio_kg = to_num(row.get(kg_col, None))
-            if guess_category_row(nombre, precio_und, precio_kg):
-                categoria = nombre.title()
-                continue
+            if precio_und is None and precio_kg is None and len(nombre) < 35:
+                categoria = nombre.title(); continue
             estado = "Sin stock" if any("NO STOCK" in str(v).upper() for v in row.values if not pd.isna(v)) else "Activo"
-            if precio_und is None and precio_kg is None and estado != "Sin stock":
-                continue
+            if precio_und is None and precio_kg is None and estado != "Sin stock": continue
             productos.append({
-                "Código": f"DV-{len(productos)+1:04d}",
-                "Producto": nombre.title(),
-                "Categoría": categoria,
-                "Precio unidad": precio_und if precio_und is not None else 0,
-                "Precio kg": precio_kg if precio_kg is not None else 0,
-                "Permite fraccionar": "Sí" if precio_kg is not None or any(w in nombre.lower() for w in ["kg", "gr", "grs", "panceta", "jamon", "paleta", "queso"]) else "No",
-                "Stock demo": 0 if estado == "Sin stock" else 25 + (len(productos) * 7) % 95,
-                "Estado": estado
+                "name": nombre.title(), "category": categoria, "sale_unit": precio_und or 0,
+                "sale_kg": precio_kg or 0, "cost_unit": 0, "cost_kg": 0,
+                "stock_qty": 0, "stock_unit": "unidad", "active": 1
             })
-    df = pd.DataFrame(productos).drop_duplicates(subset=["Producto", "Categoría"], keep="first")
-    return df.reset_index(drop=True)
+    return pd.DataFrame(productos).drop_duplicates(subset=["name", "category"], keep="first") if productos else pd.DataFrame()
 
-@st.cache_data(show_spinner=False)
-def load_default_products():
-    if DEFAULT_EXCEL.exists():
-        return parse_price_excel(DEFAULT_EXCEL)
-    return pd.DataFrame({
-        "Código": ["DV-0001"], "Producto": ["Mozzarella X 10kg"], "Categoría": ["Mozzarellas"],
-        "Precio unidad": [65000], "Precio kg": [0], "Permite fraccionar": ["No"], "Stock demo": [30], "Estado": ["Activo"]
-    })
+def init_db():
+    q("""CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY, username TEXT UNIQUE, password TEXT)""")
+    q("""CREATE TABLE IF NOT EXISTS products(
+        id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, category TEXT, sale_unit REAL DEFAULT 0,
+        sale_kg REAL DEFAULT 0, cost_unit REAL DEFAULT 0, cost_kg REAL DEFAULT 0,
+        stock_qty REAL DEFAULT 0, stock_unit TEXT DEFAULT 'unidad', active INTEGER DEFAULT 1,
+        created_at TEXT, updated_at TEXT)""")
+    q("""CREATE TABLE IF NOT EXISTS clients(
+        id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, phone TEXT, zone TEXT, type TEXT,
+        notes TEXT, created_at TEXT, updated_at TEXT)""")
+    q("""CREATE TABLE IF NOT EXISTS suppliers(
+        id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, phone TEXT, notes TEXT, created_at TEXT, updated_at TEXT)""")
+    q("""CREATE TABLE IF NOT EXISTS purchases(
+        id INTEGER PRIMARY KEY AUTOINCREMENT, supplier_id INTEGER, product_text TEXT, qty REAL,
+        unit_cost REAL, total REAL, paid REAL DEFAULT 0, date TEXT, notes TEXT)""")
+    q("""CREATE TABLE IF NOT EXISTS sales(
+        id INTEGER PRIMARY KEY AUTOINCREMENT, client_id INTEGER, client_name TEXT, date TEXT,
+        payment_method TEXT, total REAL, paid REAL DEFAULT 0, status TEXT, ticket_no TEXT, created_at TEXT)""")
+    q("""CREATE TABLE IF NOT EXISTS sale_items(
+        id INTEGER PRIMARY KEY AUTOINCREMENT, sale_id INTEGER, product_id INTEGER, product_name TEXT,
+        qty REAL, unit_type TEXT, price REAL, cost REAL, total REAL, profit REAL)""")
+    q("""CREATE TABLE IF NOT EXISTS payments(
+        id INTEGER PRIMARY KEY AUTOINCREMENT, client_id INTEGER, sale_id INTEGER, amount REAL, date TEXT, notes TEXT)""")
+    q("""CREATE TABLE IF NOT EXISTS cash_movements(
+        id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT, kind TEXT, concept TEXT, amount REAL, notes TEXT, ref TEXT)""")
+    q("""CREATE TABLE IF NOT EXISTS logistics(
+        id INTEGER PRIMARY KEY AUTOINCREMENT, visit_date TEXT, client_id INTEGER, client_name TEXT,
+        route TEXT, status TEXT, notes TEXT)""")
+    if not q("SELECT id FROM users LIMIT 1", fetch=True):
+        q("INSERT INTO users(username,password) VALUES(?,?)", ("admin", "admin123"))
+    if not q("SELECT id FROM products LIMIT 1", fetch=True):
+        df = parse_price_excel(DEFAULT_EXCEL)
+        now = datetime.now().isoformat(timespec="seconds")
+        if df.empty:
+            df = pd.DataFrame([
+                {"name":"Mozzarella X 10kg", "category":"Mozzarellas", "sale_unit":65000, "sale_kg":6500, "cost_unit":52000, "cost_kg":5200, "stock_qty":25, "stock_unit":"kg", "active":1},
+                {"name":"Jamón Cocido", "category":"Fiambres", "sale_unit":0, "sale_kg":9000, "cost_unit":0, "cost_kg":6500, "stock_qty":20, "stock_unit":"kg", "active":1},
+                {"name":"Harina 0000 Bolsa 25kg", "category":"Harinas", "sale_unit":15000, "sale_kg":600, "cost_unit":10000, "cost_kg":400, "stock_qty":300, "stock_unit":"unidad", "active":1},
+            ])
+        for _, r in df.iterrows():
+            q("""INSERT INTO products(name,category,sale_unit,sale_kg,cost_unit,cost_kg,stock_qty,stock_unit,active,created_at,updated_at)
+                 VALUES(?,?,?,?,?,?,?,?,?,?,?)""", (r["name"], r["category"], r["sale_unit"], r["sale_kg"], r.get("cost_unit",0), r.get("cost_kg",0), r.get("stock_qty",0), r.get("stock_unit","unidad"), 1, now, now))
+    if not q("SELECT id FROM clients LIMIT 1", fetch=True):
+        now = datetime.now().isoformat(timespec="seconds")
+        for name, typ in [("Pizzería La Esquina","Pizzería"),("Rotisería Avenida","Rotisería"),("Almacén Don Luis","Almacén")]:
+            q("INSERT INTO clients(name,phone,zone,type,notes,created_at,updated_at) VALUES(?,?,?,?,?,?,?)", (name,"","",typ,"",now,now))
 
-def get_products():
-    uploaded_bytes = st.session_state.get("uploaded_prices_bytes", None)
-    if uploaded_bytes is not None:
-        try:
-            return parse_price_excel(uploaded_bytes)
-        except Exception as e:
-            st.error("No se pudo leer el Excel cargado. Revisá que sea un .xlsx válido y que no esté protegido con contraseña.")
-            st.caption(f"Detalle técnico: {e}")
-            return load_default_products()
-    return load_default_products()
+init_db()
 
-def price_for_sale(row, grams, units):
-    precio_kg = float(row.get("Precio kg", 0) or 0)
-    precio_und = float(row.get("Precio unidad", 0) or 0)
-    if grams and grams > 0:
-        if precio_kg > 0:
-            return precio_kg * grams / 1000
-        return precio_und * grams / 1000
-    return precio_und * units
-
-def format_catalog(df):
-    out = df.copy()
-    if "Precio unidad" in out.columns:
-        out["Precio unidad"] = out["Precio unidad"].apply(money)
-    if "Precio kg" in out.columns:
-        out["Precio kg"] = out["Precio kg"].apply(money)
-    return out
-
-def excel_catalog_download(df):
-    out = format_catalog(df)
-    bio = io.BytesIO()
-    with pd.ExcelWriter(bio, engine="openpyxl") as writer:
-        out.to_excel(writer, index=False, sheet_name="Lista DON VALENTIN")
-        ws = writer.book["Lista DON VALENTIN"]
-        for cell in ws[1]:
-            cell.font = cell.font.copy(bold=True)
-        widths = {"A":12, "B":36, "C":22, "D":16, "E":16, "F":18, "G":12, "H":14}
-        for col, width in widths.items():
-            ws.column_dimensions[col].width = width
-    bio.seek(0)
-    return bio.getvalue()
-
-def make_ticket_html(ticket):
-    items_rows = "".join([
-        f"<tr><td>{i['Producto']}<br><small>{i['Cantidad']}</small></td><td style='text-align:right'>{money(i['Total'])}</td></tr>"
-        for i in ticket.get("Items", [])
-    ])
-    return f"""
-<!doctype html>
-<html>
-<head><meta charset='utf-8'><title>Ticket {ticket.get('Número')}</title>
-<style>
-body{{font-family:Arial, sans-serif;background:#f3f3f3;padding:20px;}}
-.ticket{{width:300px;margin:auto;background:white;padding:16px;border:1px dashed #111;color:#111;}}
-h2,h3{{text-align:center;margin:4px 0;}}
-.line{{border-top:1px dashed #111;margin:10px 0;}}
-table{{width:100%;border-collapse:collapse;font-size:12px;}}
-td{{padding:5px 0;border-bottom:1px dotted #bbb;vertical-align:top;}}
-.total{{font-size:20px;font-weight:bold;text-align:right;margin-top:10px;}}
-.btn{{display:block;text-align:center;margin:20px auto;background:#111;color:white;padding:10px;border-radius:6px;text-decoration:none;width:160px;}}
-@media print{{.btn{{display:none}} body{{background:white;padding:0}} .ticket{{border:none;width:280px}}}}
-</style></head>
-<body>
-<a href='javascript:window.print()' class='btn'>Imprimir en HP / Ctrl+P</a>
-<div class='ticket'>
-<h2>DON VALENTIN</h2>
-<h3>Ticket</h3>
-<div class='line'></div>
-<b>N°:</b> {ticket.get('Número')}<br>
-<b>Fecha:</b> {ticket.get('Fecha')}<br>
-<b>Cliente:</b> {ticket.get('Cliente')}<br>
-<b>Pago:</b> {ticket.get('Método de pago')}<br>
-<div class='line'></div>
-<table>{items_rows}</table>
-<div class='line'></div>
-<div class='total'>TOTAL {money(ticket.get('Total',0))}</div>
-<div class='line'></div>
-</div>
-</body></html>
-"""
-
-def banner():
-    st.markdown('<div class="demo-banner">✨ Sistema comercial para distribuidora gastronómica · Productos · Precios · Fraccionamiento · Tickets.</div>', unsafe_allow_html=True)
-
+# =========================
+# HELPERS
+# =========================
 def header(title, subtitle):
     st.markdown(f'<div class="hero"><h1>{title}</h1><p>{subtitle}</p></div>', unsafe_allow_html=True)
 
-def kpi(label, value, note):
+def kpi(label, value, note=""):
     st.markdown(f'<div class="card"><div class="kpi-label">{label}</div><div class="kpi-value">{value}</div><div class="kpi-note">{note}</div></div>', unsafe_allow_html=True)
 
 def styled_fig(fig, height=390):
     fig.update_layout(template="plotly_dark", height=height, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(color="#F8F1D7"), title_font=dict(color="#F5D56A", size=20), margin=dict(l=20,r=20,t=55,b=25))
     return fig
 
+def products_df(active_only=False):
+    where = "WHERE active=1" if active_only else ""
+    return df_query(f"SELECT * FROM products {where} ORDER BY category,name")
+
+def clients_df(): return df_query("SELECT * FROM clients ORDER BY name")
+def suppliers_df(): return df_query("SELECT * FROM suppliers ORDER BY name")
+
+def get_user():
+    res = q("SELECT username,password FROM users LIMIT 1", fetch=True)
+    return res[0] if res else ("admin","admin123")
+
+def set_cash(kind, concept, amount, notes="", ref=""):
+    q("INSERT INTO cash_movements(date,kind,concept,amount,notes,ref) VALUES(?,?,?,?,?,?)", (datetime.now().strftime("%Y-%m-%d %H:%M"), kind, concept, float(amount or 0), notes, ref))
+
+def ticket_html(ticket):
+    rows = "".join([f"<tr><td>{i['product_name']}<br><small>{i['qty']} {i['unit_type']}</small></td><td style='text-align:right'>{money(i['total'])}</td></tr>" for i in ticket["items"]])
+    return f"""<!doctype html><html><head><meta charset='utf-8'><title>Ticket {ticket['ticket_no']}</title>
+<style>body{{font-family:Arial;background:#f4f4f4;padding:20px}}.ticket{{width:300px;margin:auto;background:white;padding:16px;border:1px dashed #111;color:#111}}h2,h3{{text-align:center;margin:4px 0}}.line{{border-top:1px dashed #111;margin:10px 0}}table{{width:100%;font-size:12px}}td{{padding:5px 0;border-bottom:1px dotted #bbb;vertical-align:top}}.total{{font-size:20px;font-weight:bold;text-align:right;margin-top:10px}}.btn{{display:block;text-align:center;margin:20px auto;background:#111;color:white;padding:10px;border-radius:6px;text-decoration:none;width:160px}}@media print{{.btn{{display:none}} body{{background:white;padding:0}} .ticket{{border:none;width:280px}}}}</style></head>
+<body><a href='javascript:window.print()' class='btn'>Imprimir</a><div class='ticket'><h2>DON VALENTIN</h2><h3>Ticket</h3><div class='line'></div><b>N°:</b> {ticket['ticket_no']}<br><b>Fecha:</b> {ticket['date']}<br><b>Cliente:</b> {ticket['client_name']}<br><b>Pago:</b> {ticket['payment_method']}<br><div class='line'></div><table>{rows}</table><div class='line'></div><div class='total'>TOTAL {money(ticket['total'])}</div></div></body></html>"""
+
 # =========================
-# LOGIN / SIDEBAR
+# LOGIN / NAV
 # =========================
 def login():
-    image_html = f'<img class="food-hero" src="data:image/png;base64,{MOZZARELLA_B64}" />' if MOZZARELLA_B64 else '<div class="mozzarella-wrap"><div class="mozzarella"></div></div>'
-    st.markdown(f"""
-    <div class="login-shell">
-        <div class="premium-login-card">
-            <div class="login-inner">
-                {image_html}
-                <div class="brand-word">DON VALENTIN</div>
-                <div class="brand-subline">DISTRIBUIDORA</div>
-            </div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+    image_html = f'<img class="food-hero" src="data:image/png;base64,{MOZZARELLA_B64}" />' if MOZZARELLA_B64 else ''
+    st.markdown(f"""<div class="premium-login-card">{image_html}<div class="brand-word">DON VALENTIN</div><div class="brand-subline">DISTRIBUIDORA</div></div>""", unsafe_allow_html=True)
+    user0, pass0 = get_user()
     c1,c2,c3 = st.columns([1,0.82,1])
     with c2:
-        st.markdown('<div class="login-form-wrap">', unsafe_allow_html=True)
-        user=st.text_input("Usuario", placeholder="Usuario", label_visibility="collapsed")
-        pwd=st.text_input("Contraseña", type="password", placeholder="Contraseña", label_visibility="collapsed")
+        user = st.text_input("Usuario", placeholder="Usuario", label_visibility="collapsed")
+        pwd = st.text_input("Contraseña", type="password", placeholder="Contraseña", label_visibility="collapsed")
         if st.button("🔒 Ingresar", use_container_width=True):
-            if verify_login(user, pwd):
-                st.session_state.logged=True
-                st.session_state.current_user=user
-                st.rerun()
+            if user == user0 and pwd == pass0:
+                st.session_state.logged=True; st.rerun()
             else:
                 st.error("Acceso no autorizado.")
-        st.markdown('</div>', unsafe_allow_html=True)
 
 def sidebar():
     with st.sidebar:
         st.markdown("## 🧀 DON VALENTIN")
         st.markdown("**DISTRIBUIDORA**")
-        st.caption("Sistema comercial premium")
         st.markdown("---")
-        pages=["Dashboard","Lista de precios","Productos","Venta fraccionada","Ticket / Cobro","Clientes","Proveedores","Caja","Ganancias","Logística","Reportes","Configuración"]
-        icons={"Dashboard":"📊","Lista de precios":"📄","Productos":"📦","Venta fraccionada":"⚖️","Ticket / Cobro":"🧾","Clientes":"👥","Proveedores":"🏭","Caja":"💰","Ganancias":"📈","Logística":"🚚","Reportes":"📑","Configuración":"⚙️"}
+        pages = ["Dashboard","Productos","Venta / Ticket","Clientes","Proveedores","Caja","Ganancias y deudas","Logística","Reportes","Configuración"]
+        icons = {"Dashboard":"📊","Productos":"📦","Venta / Ticket":"🧾","Clientes":"👥","Proveedores":"🏭","Caja":"💰","Ganancias y deudas":"📈","Logística":"🚚","Reportes":"📑","Configuración":"⚙️"}
         for p in pages:
-            if st.button(f"{icons[p]} {p}", use_container_width=True):
-                st.session_state.page=p
-                st.rerun()
+            if st.button(f"{icons[p]} {p}", use_container_width=True): st.session_state.page=p; st.rerun()
         st.markdown("---")
-        st.success("Sistema visual activo")
-        st.caption("Lista cargable · Fraccionamiento · Ticket")
-        if st.button("Cerrar sesión", use_container_width=True):
-            st.session_state.logged=False
-            st.rerun()
+        if st.button("Cerrar sesión", use_container_width=True): st.session_state.logged=False; st.rerun()
 
 # =========================
-# PÁGINAS
+# PAGES
 # =========================
 def dashboard():
-    banner()
-    df = get_products()
-    header("DON VALENTIN", "Sistema comercial con clientes y ventas guardadas para uso diario.")
-    activos = int((df["Estado"] == "Activo").sum()) if not df.empty else 0
-    fracc = int((df["Permite fraccionar"] == "Sí").sum()) if not df.empty else 0
-    valor_lista = df[["Precio unidad", "Precio kg"]].max(axis=1).sum() if not df.empty else 0
-    c1,c2,c3,c4=st.columns(4)
-    with c1: kpi("Productos cargados", f"{len(df)}", "Desde lista de precios Excel")
-    with c2: kpi("Productos activos", f"{activos}", "Disponibles para vender")
-    with c3: kpi("Fraccionables", f"{fracc}", "Ventas desde 100g hasta 50kg")
-    with c4: kpi("Valor de lista", money(valor_lista), "Precios con signo $")
-    col1,col2=st.columns([2,1])
-    with col1:
-        cat = df.groupby("Categoría", as_index=False).size().rename(columns={"size":"Productos"}).sort_values("Productos", ascending=False).head(12)
-        st.plotly_chart(styled_fig(px.bar(cat, x="Categoría", y="Productos", text_auto=True, title="Productos por categoría"), 420), use_container_width=True)
-    with col2:
-        status = df.groupby("Estado", as_index=False).size().rename(columns={"size":"Cantidad"})
-        st.plotly_chart(styled_fig(px.pie(status, names="Estado", values="Cantidad", hole=.55, title="Estado de lista"), 420), use_container_width=True)
-    st.markdown('<div class="success-box">💡 Precios visibles con $, descarga de lista formateada, venta fraccionada y ticket simple imprimible.</div>', unsafe_allow_html=True)
-
-def lista_precios():
-    banner(); header("Lista de precios", "Subida de Excel de productos y precios para actualizar el catálogo comercial.")
-    st.markdown('<div class="card"><b>📄 Opción para el cliente:</b> subir su Excel de precios y productos. La app interpreta productos, precios por unidad y precios por kilo cuando existen.</div>', unsafe_allow_html=True)
-    uploaded = st.file_uploader("Subir Excel de precios Don Valentin", type=["xlsx", "xls"])
-    if uploaded is not None:
-        st.session_state.uploaded_prices_bytes = uploaded.getvalue()
-        st.success("Excel cargado correctamente. El catálogo se actualizó para esta sesión.")
-    df = get_products()
-    c1,c2,c3=st.columns(3)
-    with c1: st.metric("Total productos", len(df))
-    with c2: st.metric("Categorías", df["Categoría"].nunique() if not df.empty else 0)
-    with c3: st.metric("Fraccionables", int((df["Permite fraccionar"] == "Sí").sum()) if not df.empty else 0)
-    st.dataframe(format_catalog(df), use_container_width=True, hide_index=True, height=430)
-    st.download_button("⬇️ Descargar lista con precios en $", data=excel_catalog_download(df), file_name="lista_don_valentin_con_pesos.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+    header("DON VALENTIN", "Sistema operativo con stock real, ventas, clientes, caja, proveedores, ganancias y logística histórica.")
+    today = date.today().strftime("%Y-%m-%d")
+    ventas = df_query("SELECT COALESCE(SUM(total),0) total FROM sales WHERE substr(date,1,10)=?", (today,)).iloc[0,0]
+    ingresos = df_query("SELECT COALESCE(SUM(amount),0) total FROM cash_movements WHERE kind='Ingreso' AND substr(date,1,10)=?", (today,)).iloc[0,0]
+    egresos = df_query("SELECT COALESCE(SUM(amount),0) total FROM cash_movements WHERE kind='Egreso' AND substr(date,1,10)=?", (today,)).iloc[0,0]
+    ganancia = df_query("SELECT COALESCE(SUM(profit),0) total FROM sale_items si JOIN sales s ON s.id=si.sale_id WHERE substr(s.date,1,10)=?", (today,)).iloc[0,0]
+    deuda = df_query("SELECT COALESCE(SUM(total-paid),0) total FROM sales WHERE total>paid").iloc[0,0]
+    cols = st.columns(5)
+    with cols[0]: kpi("Ventas día", money(ventas), "Facturación diaria")
+    with cols[1]: kpi("Ingresos día", money(ingresos), "Caja")
+    with cols[2]: kpi("Egresos día", money(egresos), "Caja")
+    with cols[3]: kpi("Ganancia día", money(ganancia), "Venta - costo")
+    with cols[4]: kpi("Deuda clientes", money(deuda), "Pendiente")
+    p = products_df()
+    low = p[p["stock_qty"] <= 0]
+    if not low.empty: st.warning(f"⚠️ Hay {len(low)} productos sin stock o con stock en cero.")
+    c1,c2 = st.columns(2)
+    with c1:
+        sales_days = df_query("SELECT substr(date,1,10) dia, SUM(total) total FROM sales GROUP BY dia ORDER BY dia DESC LIMIT 30")
+        if not sales_days.empty: st.plotly_chart(styled_fig(px.line(sales_days.sort_values('dia'), x='dia', y='total', markers=True, title='Ventas históricas')), use_container_width=True)
+    with c2:
+        profit_prod = df_query("SELECT product_name Producto, SUM(profit) Ganancia FROM sale_items GROUP BY product_name ORDER BY Ganancia DESC LIMIT 10")
+        if not profit_prod.empty: st.plotly_chart(styled_fig(px.bar(profit_prod, x='Producto', y='Ganancia', title='Ganancia por producto')), use_container_width=True)
 
 def productos_page():
-    banner(); header("Productos", "Catálogo con precios, fraccionamiento y stock real editable para uso diario.")
-    df = get_products()
-    stock_df = load_product_stock_df()
-    stock_map = get_stock_map()
-    c1,c2,c3=st.columns(3)
-    with c1: busqueda=st.text_input("Buscar producto")
-    with c2: categoria=st.selectbox("Categoría", ["Todas"] + sorted(df["Categoría"].dropna().unique().tolist()))
-    with c3: fraccion=st.selectbox("Fraccionamiento", ["Todos", "Sí", "No"])
-    view=df.copy()
-    if busqueda:
-        view=view[view["Producto"].str.contains(busqueda, case=False, na=False)]
-    if categoria!="Todas":
-        view=view[view["Categoría"]==categoria]
-    if fraccion!="Todos":
-        view=view[view["Permite fraccionar"]==fraccion]
-    if not view.empty:
-        view["Stock real"] = view["Producto"].apply(lambda x: stock_map.get(x, {}).get("stock", 0))
-        view["Unidad stock"] = view["Producto"].apply(lambda x: stock_map.get(x, {}).get("unidad", "kg/u"))
-    st.dataframe(format_catalog(view), use_container_width=True, hide_index=True, height=430)
-
-    st.subheader("📦 Actualizar stock real")
-    st.markdown('<div class="card">El cliente carga el stock real que tiene. Cuando descarga/imprime un ticket, el sistema descuenta automáticamente lo vendido.</div>', unsafe_allow_html=True)
-    a,b,c = st.columns(3)
+    header("Productos", "Alta, edición, eliminación, costos, precios y stock real manual.")
+    df = products_df()
+    with st.expander("➕ Agregar producto nuevo", expanded=False):
+        c1,c2,c3 = st.columns(3)
+        with c1: name=st.text_input("Nombre producto") ; cat=st.text_input("Categoría")
+        with c2: sale_unit=st.number_input("Precio venta unidad",0.0,step=100.0); sale_kg=st.number_input("Precio venta kilo",0.0,step=100.0)
+        with c3: cost_unit=st.number_input("Costo unidad",0.0,step=100.0); cost_kg=st.number_input("Costo kilo",0.0,step=100.0); stock=st.number_input("Stock real",0.0,step=1.0)
+        unit=st.selectbox("Unidad de stock", ["unidad","kg","bolsa","caja","pack","litro"])
+        if st.button("Guardar producto", use_container_width=True):
+            if name.strip():
+                now=datetime.now().isoformat(timespec="seconds")
+                q("""INSERT INTO products(name,category,sale_unit,sale_kg,cost_unit,cost_kg,stock_qty,stock_unit,active,created_at,updated_at)
+                     VALUES(?,?,?,?,?,?,?,?,?,?,?)""", (name.strip(),cat.strip() or "General",sale_unit,sale_kg,cost_unit,cost_kg,stock,unit,1,now,now))
+                st.success("Producto agregado."); st.rerun()
+    st.subheader("📦 Editar productos existentes")
+    if df.empty: st.info("No hay productos."); return
+    prod_id = st.selectbox("Seleccionar producto", df["id"].tolist(), format_func=lambda x: df[df.id==x].iloc[0]["name"])
+    r = df[df.id==prod_id].iloc[0]
+    c1,c2,c3 = st.columns(3)
+    with c1: n=st.text_input("Nombre", value=r["name"]); cat=st.text_input("Categoría", value=r["category"])
+    with c2: su=st.number_input("Precio venta unidad", value=float(r["sale_unit"]), step=100.0); sk=st.number_input("Precio venta kilo", value=float(r["sale_kg"]), step=100.0)
+    with c3: cu=st.number_input("Costo unidad", value=float(r["cost_unit"]), step=100.0); ck=st.number_input("Costo kilo", value=float(r["cost_kg"]), step=100.0); stq=st.number_input("Stock real", value=float(r["stock_qty"]), step=1.0)
+    unit=st.selectbox("Unidad stock", ["unidad","kg","bolsa","caja","pack","litro"], index=["unidad","kg","bolsa","caja","pack","litro"].index(r["stock_unit"]) if r["stock_unit"] in ["unidad","kg","bolsa","caja","pack","litro"] else 0)
+    active=st.checkbox("Producto activo", value=bool(r["active"]))
+    a,b=st.columns(2)
     with a:
-        producto_stock = st.selectbox("Producto para actualizar stock", df["Producto"].tolist() if not df.empty else ["Producto"])
+        if st.button("💾 Guardar cambios", use_container_width=True):
+            q("""UPDATE products SET name=?,category=?,sale_unit=?,sale_kg=?,cost_unit=?,cost_kg=?,stock_qty=?,stock_unit=?,active=?,updated_at=? WHERE id=?""", (n,cat,su,sk,cu,ck,stq,unit,1 if active else 0,datetime.now().isoformat(timespec='seconds'),prod_id))
+            st.success("Producto actualizado."); st.rerun()
     with b:
-        stock_actual = stock_map.get(producto_stock, {}).get("stock", 0)
-        nuevo_stock = st.number_input("Stock real", min_value=-999999.0, value=float(stock_actual or 0), step=1.0)
-    with c:
-        unidad_stock = st.selectbox("Unidad stock", ["kg", "unidad", "bolsa", "caja", "bulto", "kg/u"], index=0)
-    if st.button("Guardar stock real", use_container_width=True):
-        save_product_stock(producto_stock, nuevo_stock, unidad_stock)
-        st.success("Stock real actualizado correctamente.")
+        if st.button("🗑️ Eliminar producto", use_container_width=True):
+            q("DELETE FROM products WHERE id=?", (prod_id,)); st.success("Producto eliminado."); st.rerun()
+    view=df.copy()
+    for col in ["sale_unit","sale_kg","cost_unit","cost_kg"]: view[col]=view[col].apply(money)
+    st.dataframe(view.rename(columns={"name":"Producto","category":"Categoría","sale_unit":"Venta unidad","sale_kg":"Venta kg","cost_unit":"Costo unidad","cost_kg":"Costo kg","stock_qty":"Stock","stock_unit":"Unidad","active":"Activo"}), use_container_width=True, hide_index=True)
+
+def venta_page():
+    header("Venta / Ticket", "Venta con peso manual exacto, varios productos por ticket y descuento automático de stock al confirmar.")
+    if "cart" not in st.session_state: st.session_state.cart=[]
+    p=products_df(active_only=True); c=clients_df()
+    if p.empty or c.empty: st.warning("Necesitás productos y clientes cargados."); return
+    client_id=st.selectbox("Cliente", c["id"].tolist(), format_func=lambda x: c[c.id==x].iloc[0]["name"])
+    method=st.selectbox("Método de pago", ["Efectivo","Transferencia","Mercado Pago","Cuenta corriente","Parcial"])
+    paid=st.number_input("Monto pagado", min_value=0.0, step=100.0)
+    st.subheader("Agregar producto al ticket")
+    col1,col2,col3,col4=st.columns(4)
+    with col1: pid=st.selectbox("Producto", p["id"].tolist(), format_func=lambda x: p[p.id==x].iloc[0]["name"])
+    pr=p[p.id==pid].iloc[0]
+    with col2: mode=st.radio("Modo", ["Gramos", "Unidad"], horizontal=True)
+    with col3:
+        if mode=="Gramos": qty=st.number_input("Gramos exactos", min_value=1.0, value=100.0, step=1.0)
+        else: qty=st.number_input("Cantidad", min_value=1.0, value=1.0, step=1.0)
+    with col4:
+        price=(float(pr.sale_kg or 0)*qty/1000) if mode=="Gramos" else float(pr.sale_unit or 0)*qty
+        cost=(float(pr.cost_kg or 0)*qty/1000) if mode=="Gramos" else float(pr.cost_unit or 0)*qty
+        st.metric("Total", money(price))
+    if st.button("➕ Agregar al ticket", use_container_width=True):
+        stock_needed = qty/1000 if mode=="Gramos" else qty
+        st.session_state.cart.append({"product_id":int(pid),"product_name":pr["name"],"qty":qty,"unit_type":"g" if mode=="Gramos" else "u.","stock_needed":stock_needed,"price":price,"cost":cost,"total":price,"profit":price-cost})
         st.rerun()
-
-    st.subheader("➕ Carga manual de producto")
-    st.markdown('<div class="card">Formulario visual para cargar productos nuevos en el sistema comercial.</div>', unsafe_allow_html=True)
-    a,b,c,d=st.columns(4)
-    with a: st.text_input("Producto nuevo", placeholder="Ej: Queso cremoso x kg")
-    with b: st.selectbox("Categoría nueva", sorted(df["Categoría"].dropna().unique().tolist()) + ["Nueva categoría"] if not df.empty else ["Nueva categoría"])
-    with c: st.number_input("Precio unidad", min_value=0, step=100, format="%d")
-    with d: st.number_input("Precio kg", min_value=0, step=100, format="%d")
-    st.caption("La carga manual queda preparada visualmente. Para catálogo permanente masivo, usar Excel de lista de precios.")
-    st.button("Guardar producto", use_container_width=True)
-
-def venta_fraccionada():
-    banner(); header("Venta fraccionada", "Venta con peso exacto manual y múltiples productos en un mismo ticket.")
-    df = get_products()
-    if df.empty:
-        st.warning("No hay productos cargados.")
-        return
-
-    st.subheader("🛒 Armar ticket con varios productos")
-    col1, col2 = st.columns([1, 1])
-
-    with col1:
-        cliente = st.selectbox("Cliente", get_client_names())
-        metodo = st.selectbox("Método de pago", ["Efectivo", "Transferencia", "Mercado Pago", "Cuenta corriente"])
-        productos_lista = df["Producto"].tolist()
-        prod = st.selectbox("Producto", productos_lista)
-        row = df[df["Producto"] == prod].iloc[0]
-        modo = st.radio("Modo de venta", ["Por gramos", "Por unidad"], horizontal=True)
-
-        grams = 0.0
-        units = 1.0
-        if modo == "Por gramos":
-            grams = st.number_input(
-                "Peso exacto en gramos",
-                min_value=1.0,
-                max_value=50000.0,
-                value=100.0,
-                step=1.0,
-                help="Ejemplos: 305, 505, 510, 1000, 25000, 50000."
-            )
-            cantidad_txt = f"{grams:g} g" if grams < 1000 else f"{grams/1000:g} kg"
-            cantidad_base = grams / 1000
-        else:
-            units = st.number_input("Unidades", min_value=1.0, value=1.0, step=1.0)
-            cantidad_txt = f"{units:g} u."
-            cantidad_base = units
-
-        total = price_for_sale(row, grams, units)
-        st.markdown(f'<div class="card"><div class="kpi-label">Subtotal del producto</div><div class="kpi-value">{money(total)}</div><div class="kpi-note">{prod} · {cantidad_txt}</div></div>', unsafe_allow_html=True)
-
-        if st.button("➕ Agregar producto al ticket", use_container_width=True):
-            st.session_state.venta_cart.append({
-                "Producto": prod,
-                "Modo": modo,
-                "Cantidad": cantidad_txt,
-                "Gramos": float(grams or 0),
-                "Unidades": float(units if modo == "Por unidad" else 0),
-                "Cantidad base": float(cantidad_base or 0),
-                "Total": round(float(total), 2),
-                "Total $": money(total),
-            })
-            st.success("Producto agregado al ticket.")
-            st.rerun()
-
-    with col2:
-        st.subheader("🧾 Productos del ticket")
-        if st.session_state.venta_cart:
-            cart_df = pd.DataFrame(st.session_state.venta_cart)
-            st.dataframe(cart_df[["Producto", "Cantidad", "Total $"]], use_container_width=True, hide_index=True)
-            total_ticket = sum(float(i.get("Total", 0)) for i in st.session_state.venta_cart)
-            st.metric("Total del ticket", money(total_ticket))
-            c1, c2 = st.columns(2)
-            with c1:
-                if st.button("🗑️ Vaciar ticket", use_container_width=True):
-                    st.session_state.venta_cart = []
-                    st.rerun()
-            with c2:
-                if st.button("✅ Confirmar venta y generar ticket", use_container_width=True):
-                    numero = "T-" + datetime.now().strftime("%Y%m%d%H%M%S")
-                    fecha = datetime.now().strftime("%d/%m/%Y %H:%M")
-                    total_ticket = round(sum(float(i.get("Total", 0)) for i in st.session_state.venta_cart), 2)
-                    resumen = {
-                        "Fecha": fecha,
-                        "Cliente": cliente,
-                        "Producto": f"{len(st.session_state.venta_cart)} productos",
-                        "Modo": "Ticket múltiple",
-                        "Cantidad": "Varios",
-                        "Total": total_ticket,
-                        "Total $": money(total_ticket),
-                        "Método de pago": metodo,
-                        "Ticket": numero,
-                    }
-                    save_venta_db(resumen)
-                    items = []
-                    for item in st.session_state.venta_cart:
-                        venta_item = {
-                            "Fecha": fecha,
-                            "Cliente": cliente,
-                            "Producto": item["Producto"],
-                            "Modo": item["Modo"],
-                            "Cantidad": item["Cantidad"],
-                            "Gramos": item.get("Gramos", 0),
-                            "Unidades": item.get("Unidades", 0),
-                            "Cantidad base": item.get("Cantidad base", 0),
-                            "Total": item["Total"],
-                            "Total $": money(item["Total"]),
-                            "Método de pago": metodo,
-                            "Ticket": numero,
-                        }
-                        save_venta_item_db(venta_item)
-                        items.append(venta_item)
-                    save_movimiento_caja(fecha, "Ingreso", f"Venta ticket {numero} - {cliente}", total_ticket, metodo, "Venta generada desde venta fraccionada")
-                    st.session_state.last_ticket = {
-                        "Número": numero,
-                        "Fecha": fecha,
-                        "Cliente": cliente,
-                        "Método de pago": metodo,
-                        "Items": items,
-                        "Total": total_ticket,
-                    }
-                    st.session_state.venta_cart = []
-                    st.success("Venta guardada, caja actualizada y ticket generado.")
-                    st.session_state.page = "Ticket / Cobro"
-                    st.rerun()
-        else:
-            st.info("Todavía no agregaste productos. Podés cargar mozzarella, jamón, harina y todos los productos que necesites en el mismo ticket.")
-
-    st.subheader("📋 Últimas ventas guardadas")
-    ventas = load_ventas_df()
-    if not ventas.empty:
-        show_cols = [c for c in ["Fecha","Cliente","Producto","Cantidad","Método de pago","Total $","Ticket"] if c in ventas.columns]
-        st.dataframe(ventas[show_cols], use_container_width=True, hide_index=True)
-        st.metric("Total vendido", money(ventas["Total"].sum()))
-
-def ticket_page():
-    banner(); header("Ticket / Cobro", "Vista previa de ticket listo para imprimir. Al descargar/imprimir se actualiza el stock real.")
-    ticket = st.session_state.get("last_ticket")
-    if ticket is None:
-        st.info("Todavía no generaste un ticket. Entrá en Venta fraccionada, aplicá una compra y se generará acá.")
-        ticket = {
-            "Número":"T-DEMO",
-            "Fecha":datetime.now().strftime("%d/%m/%Y %H:%M"),
-            "Cliente":"Cliente",
-            "Método de pago":"Efectivo",
-            "Items":[{"Producto":"Producto fraccionado","Cantidad":"300 g","Cantidad base":0.3,"Total":1350}],
-            "Total":1350,
-        }
-    items_html = "".join([f"<div>{i['Producto']} · {i['Cantidad']} <span style='float:right'>{money(i['Total'])}</span></div>" for i in ticket.get("Items", [])])
-    st.markdown(f"""
-    <div class='ticket-box'>
-        <h3>DON VALENTIN</h3>
-        <div style='text-align:center;'>Ticket</div>
-        <div class='ticket-line'></div>
-        <b>N°:</b> {ticket.get('Número')}<br>
-        <b>Fecha:</b> {ticket.get('Fecha')}<br>
-        <b>Cliente:</b> {ticket.get('Cliente')}<br>
-        <b>Pago:</b> {ticket.get('Método de pago')}
-        <div class='ticket-line'></div>
-        {items_html}
-        <div class='ticket-line'></div>
-        <div style='font-size:22px;font-weight:900;text-align:right;'>TOTAL {money(ticket.get('Total',0))}</div>
-    </div>
-    """, unsafe_allow_html=True)
-    html = make_ticket_html(ticket)
-    def _descontar_stock():
-        st.session_state.stock_msg = decrement_stock_for_ticket(ticket)
-    st.download_button("⬇️ Descargar ticket e imprimir", data=html.encode("utf-8"), file_name=f"ticket_{ticket.get('Número','demo')}.html", mime="text/html", use_container_width=True, on_click=_descontar_stock)
-    if st.session_state.get("stock_msg"):
-        st.success(st.session_state.stock_msg)
-    st.markdown('<div class="success-box">🖨️ Para imprimir: descargá el ticket, abrilo en Chrome/Edge y tocá <b>Ctrl + P</b>. Al tocar el botón de descarga, el stock se descuenta una sola vez por ticket.</div>', unsafe_allow_html=True)
+    if st.session_state.cart:
+        st.subheader("🧾 Ticket actual")
+        cartdf=pd.DataFrame(st.session_state.cart); cartdf["Total $"]=cartdf["total"].apply(money)
+        st.dataframe(cartdf[["product_name","qty","unit_type","Total $"]].rename(columns={"product_name":"Producto","qty":"Cantidad","unit_type":"Unidad"}), use_container_width=True, hide_index=True)
+        total=sum(i["total"] for i in st.session_state.cart)
+        if paid==0 and method!="Cuenta corriente": paid=total
+        st.metric("Total ticket", money(total))
+        a,b=st.columns(2)
+        with a:
+            if st.button("✅ Confirmar venta, descontar stock y generar ticket", use_container_width=True):
+                # validar stock
+                current=products_df().set_index("id")
+                for it in st.session_state.cart:
+                    if float(current.loc[it["product_id"],"stock_qty"]) < float(it["stock_needed"]):
+                        st.error(f"Stock insuficiente: {it['product_name']}"); return
+                ticket_no="T-"+datetime.now().strftime("%Y%m%d%H%M%S")
+                client_name=c[c.id==client_id].iloc[0]["name"]
+                status="Pagado" if paid>=total else "Pendiente"
+                now=datetime.now().strftime("%Y-%m-%d %H:%M")
+                q("INSERT INTO sales(client_id,client_name,date,payment_method,total,paid,status,ticket_no,created_at) VALUES(?,?,?,?,?,?,?,?,?)", (int(client_id),client_name,now,method,total,paid,status,ticket_no,now))
+                sale_id=q("SELECT last_insert_rowid()", fetch=True)[0][0]
+                for it in st.session_state.cart:
+                    q("INSERT INTO sale_items(sale_id,product_id,product_name,qty,unit_type,price,cost,total,profit) VALUES(?,?,?,?,?,?,?,?,?)", (sale_id,it["product_id"],it["product_name"],it["qty"],it["unit_type"],it["price"],it["cost"],it["total"],it["profit"]))
+                    q("UPDATE products SET stock_qty=stock_qty-?, updated_at=? WHERE id=?", (it["stock_needed"], datetime.now().isoformat(timespec='seconds'), it["product_id"]))
+                if paid>0:
+                    q("INSERT INTO payments(client_id,sale_id,amount,date,notes) VALUES(?,?,?,?,?)", (int(client_id), sale_id, paid, now, "Pago al generar ticket"))
+                    set_cash("Ingreso", f"Cobro ticket {ticket_no}", paid, client_name, ticket_no)
+                st.session_state.last_ticket={"ticket_no":ticket_no,"date":now,"client_name":client_name,"payment_method":method,"items":st.session_state.cart.copy(),"total":total}
+                st.session_state.cart=[]
+                st.success("Venta guardada, stock actualizado y ticket generado."); st.rerun()
+        with b:
+            if st.button("🧹 Limpiar ticket", use_container_width=True): st.session_state.cart=[]; st.rerun()
+    if st.session_state.get("last_ticket"):
+        t=st.session_state.last_ticket
+        st.markdown(f"""<div class='ticket-box'><h3>DON VALENTIN</h3><div style='text-align:center;'>Ticket</div><div class='ticket-line'></div><b>N°:</b> {t['ticket_no']}<br><b>Fecha:</b> {t['date']}<br><b>Cliente:</b> {t['client_name']}<br><b>Pago:</b> {t['payment_method']}<div class='ticket-line'></div>""", unsafe_allow_html=True)
+        for it in t["items"]: st.markdown(f"<div>{it['product_name']} · {it['qty']} {it['unit_type']} <span style='float:right'>{money(it['total'])}</span></div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='ticket-line'></div><div style='font-size:22px;font-weight:900;text-align:right;'>TOTAL {money(t['total'])}</div></div>", unsafe_allow_html=True)
+        st.download_button("⬇️ Descargar ticket HTML para imprimir", data=ticket_html(t).encode('utf-8'), file_name=f"ticket_{t['ticket_no']}.html", mime="text/html", use_container_width=True)
 
 def clientes_page():
-    banner(); header("Clientes", "Alta de clientes, facturación, pagos parciales, deuda y alertas de cobranza.")
-
-    st.subheader("➕ Cargar cliente nuevo")
-    st.markdown('<div class="card">Formulario para dar de alta compradores, comercios o cuentas corrientes. Los clientes quedan guardados en la base de datos.</div>', unsafe_allow_html=True)
-
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        nuevo_cliente = st.text_input("Nombre / Razón social", placeholder="Ej: Pizzería San Martín")
-        telefono = st.text_input("Teléfono", placeholder="Ej: 11 1234-5678")
-    with c2:
-        tipo = st.selectbox("Tipo de cliente", ["Pizzería", "Rotisería", "Panadería", "Almacén", "Restaurant", "Mayorista", "Otro"])
-        zona = st.text_input("Zona / Localidad", placeholder="Ej: Centro")
-    with c3:
-        estado = st.selectbox("Estado", ["Activo", "Inactivo", "Cuenta corriente"])
-        observaciones = st.text_area("Observaciones", placeholder="Ej: compra mozzarella por semana")
-
-    if st.button("Guardar cliente", use_container_width=True):
-        if nuevo_cliente.strip():
-            add_cliente_db(nuevo_cliente.strip(), tipo, zona, telefono, estado, observaciones)
-            st.session_state.clientes_demo = get_client_names()
-            st.success("Cliente guardado correctamente en la base de datos.")
-        else:
-            st.warning("Ingresá el nombre del cliente.")
-
-    st.subheader("💰 Registrar pago parcial o total de cliente")
-    nombres = get_client_names()
-    p1, p2, p3 = st.columns(3)
-    with p1:
-        cliente_pago = st.selectbox("Cliente que paga", nombres)
-        monto_pago = st.number_input("Monto pagado", min_value=0.0, value=0.0, step=100.0)
-    with p2:
-        medio_pago = st.selectbox("Medio de pago cliente", ["Efectivo", "Transferencia", "Mercado Pago", "Cheque", "Otro"])
-    with p3:
-        obs_pago = st.text_input("Observación pago", placeholder="Ej: pago parcial cuenta corriente")
-    if st.button("Guardar pago del cliente", use_container_width=True):
-        if monto_pago <= 0:
-            st.warning("Ingresá un monto mayor a cero.")
-        else:
-            fecha = datetime.now().strftime("%d/%m/%Y %H:%M")
-            save_cliente_pago(fecha, cliente_pago, monto_pago, medio_pago, obs_pago)
-            save_movimiento_caja(fecha, "Ingreso", f"Pago cliente {cliente_pago}", monto_pago, medio_pago, obs_pago)
-            st.success("Pago guardado. Caja y cuenta del cliente actualizadas.")
-
-    st.subheader("📊 Facturación, pagos y deuda por cliente")
-    resumen = clientes_facturacion_df()
-    if not resumen.empty:
-        alertas = resumen[resumen["Alerta"].str.contains("Más de 7", na=False)]
-        if not alertas.empty:
-            st.warning(f"⚠️ Hay {len(alertas)} cliente(s) con deuda de más de 7 días.")
-            st.dataframe(alertas[["Cliente", "Facturado $", "Pagado $", "Debe $", "Última deuda", "Días deuda", "Alerta"]], use_container_width=True, hide_index=True)
-        st.dataframe(resumen[["Cliente", "Facturado $", "Pagado $", "Debe $", "Última deuda", "Días deuda", "Alerta"]], use_container_width=True, hide_index=True)
-    else:
-        st.info("Todavía no hay facturación registrada por cliente.")
-
-    st.subheader("👥 Clientes guardados")
-    clientes = load_clientes_df()
-    st.dataframe(clientes, use_container_width=True, hide_index=True)
-
-    pagos = load_cliente_pagos_df()
-    if not pagos.empty:
-        st.subheader("📥 Pagos de clientes registrados")
-        st.dataframe(pagos[["Fecha", "Cliente", "Monto $", "Medio", "Observaciones"]], use_container_width=True, hide_index=True)
+    header("Clientes", "Alta, edición, eliminación, pagos parciales, deuda y alertas de más de 7 días.")
+    with st.expander("➕ Agregar cliente", expanded=False):
+        c1,c2,c3=st.columns(3)
+        with c1: name=st.text_input("Nombre/Razón social"); phone=st.text_input("Teléfono")
+        with c2: zone=st.text_input("Zona"); typ=st.text_input("Tipo")
+        with c3: notes=st.text_area("Notas")
+        if st.button("Guardar cliente") and name.strip():
+            now=datetime.now().isoformat(timespec='seconds')
+            q("INSERT INTO clients(name,phone,zone,type,notes,created_at,updated_at) VALUES(?,?,?,?,?,?,?)", (name,phone,zone,typ,notes,now,now)); st.rerun()
+    clients=clients_df()
+    if not clients.empty:
+        cid=st.selectbox("Editar cliente", clients.id.tolist(), format_func=lambda x: clients[clients.id==x].iloc[0].name)
+        r=clients[clients.id==cid].iloc[0]
+        c1,c2,c3=st.columns(3)
+        with c1: n=st.text_input("Nombre", value=r["name"]); ph=st.text_input("Teléfono", value=r["phone"] or "")
+        with c2: z=st.text_input("Zona", value=r["zone"] or ""); ty=st.text_input("Tipo", value=r["type"] or "")
+        with c3: no=st.text_area("Notas", value=r["notes"] or "")
+        a,b=st.columns(2)
+        with a:
+            if st.button("💾 Actualizar cliente", use_container_width=True): q("UPDATE clients SET name=?,phone=?,zone=?,type=?,notes=?,updated_at=? WHERE id=?", (n,ph,z,ty,no,datetime.now().isoformat(timespec='seconds'),cid)); st.rerun()
+        with b:
+            if st.button("🗑️ Eliminar cliente", use_container_width=True): q("DELETE FROM clients WHERE id=?", (cid,)); st.rerun()
+        deuda=df_query("SELECT id,ticket_no,date,total,paid,(total-paid) deuda FROM sales WHERE client_id=? AND total>paid ORDER BY date", (cid,))
+        st.subheader("Cuenta corriente")
+        if not deuda.empty:
+            st.dataframe(deuda.assign(total=deuda.total.apply(money), paid=deuda.paid.apply(money), deuda=deuda.deuda.apply(money)), use_container_width=True, hide_index=True)
+            sid=st.selectbox("Venta a pagar", deuda.id.tolist(), format_func=lambda x: deuda[deuda.id==x].iloc[0].ticket_no)
+            monto=st.number_input("Pago parcial", min_value=0.0, step=100.0)
+            if st.button("Registrar pago parcial") and monto>0:
+                now=datetime.now().strftime("%Y-%m-%d %H:%M")
+                q("UPDATE sales SET paid=paid+?, status=CASE WHEN paid+?>=total THEN 'Pagado' ELSE 'Pendiente' END WHERE id=?", (monto,monto,sid))
+                q("INSERT INTO payments(client_id,sale_id,amount,date,notes) VALUES(?,?,?,?,?)", (cid,sid,monto,now,"Pago parcial"))
+                set_cash("Ingreso","Pago parcial cliente",monto,n,sid); st.rerun()
+        old=df_query("SELECT client_name,ticket_no,date,total-paid deuda FROM sales WHERE total>paid AND julianday('now')-julianday(substr(date,1,10))>7")
+        if not old.empty: st.error(f"⚠️ Alertas: {len(old)} deudas con más de 7 días sin pagar."); st.dataframe(old, use_container_width=True, hide_index=True)
+        st.subheader("Clientes")
+        st.dataframe(clients, use_container_width=True, hide_index=True)
 
 def proveedores_page():
-    banner(); header("Proveedores", "Alta de proveedores, carga de compras y costos para calcular ganancias por producto.")
-    df = get_products()
-
-    st.subheader("🏭 Cargar proveedor")
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        proveedor = st.text_input("Proveedor", placeholder="Ej: Molino Cañuelas")
-        telefono = st.text_input("Teléfono proveedor", placeholder="Ej: 11 1234-5678")
-    with c2:
-        zona = st.text_input("Zona / Localidad", placeholder="Ej: CABA")
-    with c3:
-        obs = st.text_area("Observaciones proveedor", placeholder="Condiciones, contacto, etc.")
-    if st.button("Guardar proveedor", use_container_width=True):
-        if proveedor.strip():
-            add_proveedor_db(proveedor, telefono, zona, obs)
-            st.success("Proveedor guardado correctamente.")
-        else:
-            st.warning("Ingresá el nombre del proveedor.")
-
-    st.subheader("📦 Registrar compra a proveedor")
-    proveedores = get_provider_names()
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        prov_compra = st.selectbox("Proveedor de la compra", proveedores)
-        prod_compra = st.text_input("Producto comprado manual", placeholder="Ej: Harina 0000 Cañuelas / Mozzarella / Jamón")
-    with c2:
-        cantidad = st.number_input("Cantidad comprada", min_value=0.0, value=1.0, step=1.0)
-        unidad = st.selectbox("Unidad", ["kg", "unidad", "bolsa", "caja", "bulto"])
-    with c3:
-        costo_total = st.number_input("Costo total pagado", min_value=0.0, value=0.0, step=100.0)
-        detalle = st.text_input("Detalle", placeholder="Ej: Molino Cañuelas vendió 300 bolsas 4.0")
-    registrar_egreso = st.checkbox("Registrar automáticamente como egreso de caja", value=True)
-    if st.button("Guardar compra", use_container_width=True):
-        if not str(prod_compra).strip():
-            st.warning("Ingresá o seleccioná un producto.")
-        elif cantidad <= 0 or costo_total <= 0:
-            st.warning("La cantidad y el costo total deben ser mayores a cero.")
-        else:
-            fecha = datetime.now().strftime("%d/%m/%Y %H:%M")
-            save_compra_db(fecha, prov_compra, str(prod_compra), cantidad, unidad, costo_total, detalle)
-            if registrar_egreso:
-                save_movimiento_caja(fecha, "Egreso", f"Compra a {prov_compra}: {cantidad:g} {unidad} de {prod_compra}", costo_total, "Efectivo/Transferencia", detalle)
-            st.success("Compra guardada. Ya se puede usar para calcular ganancia por producto.")
-
-    st.subheader("👥 Proveedores guardados")
-    proveedores_df = load_proveedores_df()
-    st.dataframe(proveedores_df, use_container_width=True, hide_index=True)
-
-    st.subheader("🧾 Compras guardadas")
-    compras = load_compras_df()
-    if not compras.empty:
-        st.dataframe(compras[["Fecha","Proveedor","Producto","Cantidad","Unidad","Costo total $","Costo unitario $","Detalle"]], use_container_width=True, hide_index=True)
-    else:
-        st.info("Todavía no hay compras cargadas.")
+    header("Proveedores", "Proveedor, producto comprado manual, pagos/deudas y egresos.")
+    with st.expander("➕ Agregar proveedor", expanded=False):
+        name=st.text_input("Proveedor"); phone=st.text_input("Teléfono"); notes=st.text_area("Notas")
+        if st.button("Guardar proveedor") and name.strip():
+            now=datetime.now().isoformat(timespec='seconds'); q("INSERT INTO suppliers(name,phone,notes,created_at,updated_at) VALUES(?,?,?,?,?)", (name,phone,notes,now,now)); st.rerun()
+    sups=suppliers_df()
+    if not sups.empty:
+        st.subheader("Registrar compra a proveedor")
+        c1,c2,c3,c4=st.columns(4)
+        with c1: sid=st.selectbox("Proveedor", sups.id.tolist(), format_func=lambda x: sups[sups.id==x].iloc[0].name)
+        with c2: product_text=st.text_input("Producto comprado manual", placeholder="Ej: Harina 0000 bolsa 25kg")
+        with c3: qty=st.number_input("Cantidad", min_value=0.0, step=1.0); unit_cost=st.number_input("Costo unitario", min_value=0.0, step=100.0)
+        with c4: paid=st.number_input("Monto pagado", min_value=0.0, step=100.0)
+        total=qty*unit_cost; st.metric("Total compra", money(total))
+        if st.button("Guardar compra a proveedor") and product_text.strip():
+            now=datetime.now().strftime("%Y-%m-%d %H:%M")
+            q("INSERT INTO purchases(supplier_id,product_text,qty,unit_cost,total,paid,date,notes) VALUES(?,?,?,?,?,?,?,?)", (sid,product_text,qty,unit_cost,total,paid,now,""))
+            if paid>0: set_cash("Egreso", f"Pago proveedor {sups[sups.id==sid].iloc[0].name}", paid, product_text, "Compra")
+            st.success("Compra guardada."); st.rerun()
+        st.subheader("Compras / deudas proveedores")
+        pur=df_query("SELECT p.id,s.name Proveedor,p.product_text Producto,p.qty Cantidad,p.unit_cost Costo,p.total Total,p.paid Pagado,(p.total-p.paid) Deuda,p.date Fecha FROM purchases p LEFT JOIN suppliers s ON s.id=p.supplier_id ORDER BY p.id DESC")
+        st.dataframe(pur, use_container_width=True, hide_index=True)
+        if not pur.empty:
+            delid=st.selectbox("Eliminar compra/deuda", pur.id.tolist())
+            if st.button("Eliminar compra/deuda proveedor"):
+                q("DELETE FROM purchases WHERE id=?", (delid,)); st.rerun()
 
 def caja_page():
-    banner(); header("Caja", "Ingresos y egresos de dinero guardados de forma permanente.")
-    st.subheader("➕ Nuevo movimiento de caja")
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        tipo = st.selectbox("Tipo", ["Ingreso", "Egreso"])
-        monto = st.number_input("Monto", min_value=0.0, value=0.0, step=100.0)
-    with c2:
-        concepto = st.text_input("Concepto", placeholder="Ej: Pago proveedor / Cobro cliente")
-        medio = st.selectbox("Medio", ["Efectivo", "Transferencia", "Mercado Pago", "Cheque", "Otro"])
-    with c3:
-        observaciones = st.text_area("Observaciones")
-    if st.button("Guardar movimiento", use_container_width=True):
-        if monto <= 0 or not concepto.strip():
-            st.warning("Ingresá concepto y monto mayor a cero.")
-        else:
-            save_movimiento_caja(datetime.now().strftime("%d/%m/%Y %H:%M"), tipo, concepto, monto, medio, observaciones)
-            st.success("Movimiento guardado correctamente.")
-
-    caja = load_caja_df()
-    ingresos = caja[caja["Tipo"] == "Ingreso"]["Monto"].sum() if not caja.empty else 0
-    egresos = caja[caja["Tipo"] == "Egreso"]["Monto"].sum() if not caja.empty else 0
-    c1, c2, c3 = st.columns(3)
-    with c1: st.metric("Ingresos", money(ingresos))
-    with c2: st.metric("Egresos", money(egresos))
-    with c3: st.metric("Saldo", money(ingresos - egresos))
-    st.subheader("📋 Movimientos")
-    if not caja.empty:
-        st.dataframe(caja[["Fecha","Tipo","Concepto","Monto $","Medio","Observaciones"]], use_container_width=True, hide_index=True)
-    else:
-        st.info("Todavía no hay movimientos de caja.")
+    header("Caja", "Ingresos, egresos, edición y eliminación manual de movimientos.")
+    c1,c2,c3=st.columns(3)
+    with c1: kind=st.selectbox("Tipo", ["Ingreso","Egreso"])
+    with c2: concept=st.text_input("Concepto")
+    with c3: amount=st.number_input("Monto", min_value=0.0, step=100.0)
+    notes=st.text_area("Notas")
+    if st.button("Agregar movimiento de caja") and concept.strip() and amount>0:
+        set_cash(kind, concept, amount, notes); st.rerun()
+    mov=df_query("SELECT * FROM cash_movements ORDER BY id DESC")
+    st.dataframe(mov, use_container_width=True, hide_index=True)
+    if not mov.empty:
+        mid=st.selectbox("Editar/eliminar movimiento", mov.id.tolist())
+        r=mov[mov.id==mid].iloc[0]
+        c1,c2,c3=st.columns(3)
+        with c1: k=st.selectbox("Tipo edit", ["Ingreso","Egreso"], index=0 if r.kind=="Ingreso" else 1)
+        with c2: co=st.text_input("Concepto edit", value=r.concept)
+        with c3: am=st.number_input("Monto edit", value=float(r.amount), step=100.0)
+        no=st.text_area("Notas edit", value=r.notes or "")
+        a,b=st.columns(2)
+        with a:
+            if st.button("Actualizar movimiento", use_container_width=True): q("UPDATE cash_movements SET kind=?,concept=?,amount=?,notes=? WHERE id=?", (k,co,am,no,mid)); st.rerun()
+        with b:
+            if st.button("Eliminar movimiento", use_container_width=True): q("DELETE FROM cash_movements WHERE id=?", (mid,)); st.rerun()
 
 def ganancias_page():
-    banner(); header("Ganancias", "Ganancia y pérdida por producto comparando compras contra ventas.")
-    ventas_items = load_ventas_items_df()
-    compras = load_compras_df()
-    if ventas_items.empty:
-        st.info("Todavía no hay ventas reales por producto. Generá tickets desde Venta fraccionada.")
-        return
-
-    costos = costo_promedio_por_producto()
-    rows = []
-    for producto, g in ventas_items.groupby("Producto"):
-        total_vendido = g["Total"].sum()
-        cantidad_base = g["Cantidad base"].sum()
-        costo_unit = costos.get(producto, 0)
-        costo_estimado = costo_unit * cantidad_base if costo_unit else 0
-        ganancia = total_vendido - costo_estimado if costo_unit else 0
-        margen = (ganancia / total_vendido * 100) if total_vendido and costo_unit else 0
-        rows.append({
-            "Producto": producto,
-            "Cantidad vendida base": round(cantidad_base, 3),
-            "Vendido $": money(total_vendido),
-            "Costo promedio $": money(costo_unit) if costo_unit else "Sin costo cargado",
-            "Costo estimado $": money(costo_estimado) if costo_unit else "-",
-            "Ganancia $": money(ganancia) if costo_unit else "-",
-            "Margen %": f"{margen:.1f}%" if costo_unit else "-",
-        })
-    res = pd.DataFrame(rows)
-    st.dataframe(res, use_container_width=True, hide_index=True)
-
-    con_costo = [r for r in rows if r["Ganancia $"] != "-"]
-    if con_costo:
-        plot_df = pd.DataFrame(con_costo)
-        plot_df["Ganancia num"] = plot_df["Ganancia $"].str.replace("$", "", regex=False).str.replace(".", "", regex=False).astype(float)
-        st.plotly_chart(styled_fig(px.bar(plot_df, x="Producto", y="Ganancia num", title="Ganancia estimada por producto"), 420), use_container_width=True)
-    st.markdown('<div class="locked-box">📌 Para ver ganancias reales, primero cargá las compras en Proveedores con el mismo nombre de producto que después vendés.</div>', unsafe_allow_html=True)
+    header("Ganancias y deudas", "Relación completa entre ganancias, deudas de clientes y deudas a proveedores.")
+    sales_profit=df_query("SELECT COALESCE(SUM(profit),0) ganancia FROM sale_items").iloc[0,0]
+    client_debt=df_query("SELECT COALESCE(SUM(total-paid),0) deuda FROM sales WHERE total>paid").iloc[0,0]
+    supp_debt=df_query("SELECT COALESCE(SUM(total-paid),0) deuda FROM purchases WHERE total>paid").iloc[0,0]
+    c1,c2,c3=st.columns(3)
+    with c1: kpi("Ganancia acumulada", money(sales_profit))
+    with c2: kpi("Deuda de clientes", money(client_debt))
+    with c3: kpi("Deuda a proveedores", money(supp_debt))
+    gp=df_query("SELECT product_name Producto, SUM(profit) Ganancia, SUM(total) Facturación FROM sale_items GROUP BY product_name ORDER BY Ganancia DESC")
+    if not gp.empty: st.dataframe(gp.assign(Ganancia=gp.Ganancia.apply(money), Facturación=gp.Facturación.apply(money)), use_container_width=True, hide_index=True)
 
 def logistica_page():
-    banner(); header("Logística", "Vista comercial de preparación, despacho y entrega de pedidos.")
-    rutas = pd.DataFrame({"Ruta":["Centro","Zona Norte","Zona Oeste","Zona Sur"],"Chofer":["Martín","Lucas","Diego","Sergio"],"Pedidos":[12,8,10,7],"Estado":["En reparto","Preparando","En reparto","Pendiente"]})
-    st.dataframe(rutas, use_container_width=True, hide_index=True)
-    st.plotly_chart(styled_fig(px.bar(rutas, x="Ruta", y="Pedidos", color="Estado", title="Pedidos por ruta")), use_container_width=True)
+    header("Logística", "Organizar recorridos, clientes a visitar, estado de visita y planificación semanal.")
+    c=clients_df()
+    if c.empty: st.warning("Primero cargá clientes."); return
+    with st.expander("➕ Agendar visita", expanded=False):
+        d=st.date_input("Fecha de visita", value=date.today())
+        cid=st.selectbox("Cliente", c.id.tolist(), format_func=lambda x: c[c.id==x].iloc[0].name)
+        route=st.text_input("Recorrido / zona", placeholder="Ej: Centro mañana")
+        notes=st.text_area("Notas")
+        if st.button("Guardar visita"):
+            cname=c[c.id==cid].iloc[0].name
+            q("INSERT INTO logistics(visit_date,client_id,client_name,route,status,notes) VALUES(?,?,?,?,?,?)", (str(d),cid,cname,route,"Pendiente",notes)); st.rerun()
+    log=df_query("SELECT * FROM logistics ORDER BY visit_date, id")
+    st.dataframe(log, use_container_width=True, hide_index=True)
+    if not log.empty:
+        lid=st.selectbox("Modificar visita", log.id.tolist(), format_func=lambda x: f"{log[log.id==x].iloc[0].visit_date} - {log[log.id==x].iloc[0].client_name}")
+        r=log[log.id==lid].iloc[0]
+        status=st.selectbox("Estado", ["Pendiente","Visitado","No visitado","Reprogramar"], index=["Pendiente","Visitado","No visitado","Reprogramar"].index(r.status) if r.status in ["Pendiente","Visitado","No visitado","Reprogramar"] else 0)
+        notes=st.text_area("Notas visita", value=r.notes or "")
+        a,b=st.columns(2)
+        with a:
+            if st.button("Actualizar visita", use_container_width=True): q("UPDATE logistics SET status=?,notes=? WHERE id=?", (status,notes,lid)); st.rerun()
+        with b:
+            if st.button("Eliminar visita", use_container_width=True): q("DELETE FROM logistics WHERE id=?", (lid,)); st.rerun()
 
 def reportes_page():
-    banner(); header("Reportes", "Facturación diaria, caja, ingresos, egresos, ventas y stock.")
-    ventas = load_ventas_df()
-    caja = load_caja_df()
-    ventas_items = load_ventas_items_df()
-    stock_df = load_product_stock_df()
-
-    ventas_hoy = ventas[ventas["Fecha"].apply(is_today)] if not ventas.empty else pd.DataFrame()
-    caja_hoy = caja[caja["Fecha"].apply(is_today)] if not caja.empty else pd.DataFrame()
-
-    venta_dia = float(ventas_hoy["Total"].sum()) if not ventas_hoy.empty else 0.0
-    ingresos_dia = float(caja_hoy[caja_hoy["Tipo"] == "Ingreso"]["Monto"].sum()) if not caja_hoy.empty else 0.0
-    egresos_dia = float(caja_hoy[caja_hoy["Tipo"] == "Egreso"]["Monto"].sum()) if not caja_hoy.empty else 0.0
-    saldo_dia = ingresos_dia - egresos_dia
-
-    c1, c2, c3, c4 = st.columns(4)
-    with c1: st.metric("Venta del día", money(venta_dia))
-    with c2: st.metric("Ingresos del día", money(ingresos_dia))
-    with c3: st.metric("Egresos del día", money(egresos_dia))
-    with c4: st.metric("Saldo de caja del día", money(saldo_dia))
-
-    st.subheader("📅 Facturación diaria")
-    if not ventas.empty:
-        tmp = ventas.copy()
-        tmp["Día"] = tmp["Fecha"].apply(lambda x: parse_fecha(x).strftime("%d/%m/%Y") if parse_fecha(x) else "Sin fecha")
-        diario = tmp.groupby("Día", as_index=False).agg(Facturación=("Total", "sum"), Tickets=("Ticket", "count"))
-        diario["Facturación $"] = diario["Facturación"].apply(money)
-        st.dataframe(diario[["Día", "Tickets", "Facturación $"]], use_container_width=True, hide_index=True)
-        st.plotly_chart(styled_fig(px.bar(diario, x="Día", y="Facturación", text_auto=True, title="Facturación por día"), 380), use_container_width=True)
-    else:
-        st.info("Todavía no hay ventas registradas.")
-
-    st.subheader("💰 Caja diaria")
-    if not caja.empty:
-        tmpc = caja.copy()
-        tmpc["Día"] = tmpc["Fecha"].apply(lambda x: parse_fecha(x).strftime("%d/%m/%Y") if parse_fecha(x) else "Sin fecha")
-        diario_caja = tmpc.groupby(["Día", "Tipo"], as_index=False).agg(Monto=("Monto", "sum"))
-        diario_caja["Monto $"] = diario_caja["Monto"].apply(money)
-        st.dataframe(diario_caja[["Día", "Tipo", "Monto $"]], use_container_width=True, hide_index=True)
-        st.plotly_chart(styled_fig(px.bar(diario_caja, x="Día", y="Monto", color="Tipo", barmode="group", title="Ingresos y egresos por día"), 380), use_container_width=True)
-    else:
-        st.info("Todavía no hay movimientos de caja.")
-
-    st.subheader("🧾 Ventas del día")
-    if not ventas_hoy.empty:
-        st.dataframe(ventas_hoy[["Fecha", "Cliente", "Producto", "Cantidad", "Método de pago", "Total $", "Ticket"]], use_container_width=True, hide_index=True)
-    else:
-        st.info("Hoy todavía no hay ventas registradas.")
-
-    st.subheader("📦 Stock real")
-    if not stock_df.empty:
-        st.dataframe(stock_df, use_container_width=True, hide_index=True)
-    else:
-        st.info("Todavía no hay stock real cargado en Productos.")
-
-    st.subheader("👥 Clientes con deuda")
-    resumen_clientes = clientes_facturacion_df()
-    if not resumen_clientes.empty:
-        deuda = resumen_clientes[resumen_clientes["Debe"] > 0]
-        if not deuda.empty:
-            st.dataframe(deuda[["Cliente", "Facturado $", "Pagado $", "Debe $", "Última deuda", "Días deuda", "Alerta"]], use_container_width=True, hide_index=True)
-        else:
-            st.success("No hay clientes con deuda pendiente.")
+    header("Reportes y estadísticas", "Facturación diaria, caja, ingresos, egresos, ganancias día/semana/mes/año e históricos.")
+    sales=df_query("SELECT * FROM sales ORDER BY date DESC")
+    cash=df_query("SELECT * FROM cash_movements ORDER BY date DESC")
+    items=df_query("SELECT si.*, s.date FROM sale_items si JOIN sales s ON s.id=si.sale_id")
+    today=date.today()
+    periods={"Día": today.strftime("%Y-%m-%d"), "Semana": (today-timedelta(days=7)).strftime("%Y-%m-%d"), "Mes": today.replace(day=1).strftime("%Y-%m-%d"), "Año": today.replace(month=1,day=1).strftime("%Y-%m-%d")}
+    cols=st.columns(4)
+    for col,(name,start) in zip(cols,periods.items()):
+        gain=df_query("SELECT COALESCE(SUM(si.profit),0) total FROM sale_items si JOIN sales s ON s.id=si.sale_id WHERE substr(s.date,1,10)>=?", (start,)).iloc[0,0]
+        with col: kpi(f"Ganancia {name}", money(gain))
+    if not sales.empty:
+        diario=df_query("SELECT substr(date,1,10) Fecha, SUM(total) Facturación, SUM(paid) Cobrado FROM sales GROUP BY Fecha ORDER BY Fecha DESC")
+        st.subheader("Facturación diaria")
+        st.dataframe(diario.assign(Facturación=diario.Facturación.apply(money), Cobrado=diario.Cobrado.apply(money)), use_container_width=True, hide_index=True)
+    if not cash.empty:
+        caja=df_query("SELECT substr(date,1,10) Fecha, kind Tipo, SUM(amount) Total FROM cash_movements GROUP BY Fecha,Tipo ORDER BY Fecha DESC")
+        st.subheader("Caja diaria: ingresos y egresos")
+        st.dataframe(caja.assign(Total=caja.Total.apply(money)), use_container_width=True, hide_index=True)
+    if not items.empty:
+        prod=df_query("SELECT product_name Producto, SUM(total) Facturación, SUM(profit) Ganancia FROM sale_items GROUP BY product_name ORDER BY Ganancia DESC")
+        st.subheader("Ganancia por producto")
+        st.dataframe(prod.assign(Facturación=prod.Facturación.apply(money), Ganancia=prod.Ganancia.apply(money)), use_container_width=True, hide_index=True)
 
 def config_page():
-    banner(); header("Configuración", "Cambiar usuario y contraseña de acceso al sistema.")
-    saved_user, _ = get_auth_user()
-
-    st.markdown('<div class="card"><b>👤 Usuario actual:</b> ' + saved_user + '<br><br>Desde esta pantalla se puede cambiar el usuario y la contraseña de acceso. Guardá estos datos en un lugar seguro.</div>', unsafe_allow_html=True)
-
-    c1, c2 = st.columns(2)
-    with c1:
-        nuevo_usuario = st.text_input("Nuevo usuario", value=saved_user)
-        clave_actual = st.text_input("Contraseña actual", type="password")
-    with c2:
-        nueva_clave = st.text_input("Nueva contraseña", type="password")
-        confirmar_clave = st.text_input("Confirmar nueva contraseña", type="password")
-
+    header("Configuración", "Cambiar usuario y contraseña.")
+    user0, pass0=get_user()
+    st.caption(f"Usuario actual: {user0}")
+    current=st.text_input("Contraseña actual", type="password")
+    new_user=st.text_input("Nuevo usuario", value=user0)
+    new_pass=st.text_input("Nueva contraseña", type="password")
+    confirm=st.text_input("Confirmar contraseña", type="password")
     if st.button("Guardar usuario y contraseña", use_container_width=True):
-        if not clave_actual:
-            st.warning("Ingresá la contraseña actual.")
-        elif not verify_login(saved_user, clave_actual):
-            st.error("La contraseña actual no es correcta.")
-        elif not nuevo_usuario.strip():
-            st.warning("El usuario no puede quedar vacío.")
-        elif len(nueva_clave) < 4:
-            st.warning("La nueva contraseña debe tener al menos 4 caracteres.")
-        elif nueva_clave != confirmar_clave:
-            st.error("La nueva contraseña y la confirmación no coinciden.")
+        if current!=pass0: st.error("La contraseña actual no coincide.")
+        elif not new_user.strip() or not new_pass: st.warning("Completá nuevo usuario y contraseña.")
+        elif new_pass!=confirm: st.error("Las contraseñas no coinciden.")
         else:
-            update_auth_user(nuevo_usuario.strip(), nueva_clave)
-            st.session_state.current_user = nuevo_usuario.strip()
-            st.success("Usuario y contraseña actualizados correctamente. La próxima vez se ingresa con los nuevos datos.")
+            q("UPDATE users SET username=?, password=? WHERE id=(SELECT id FROM users LIMIT 1)", (new_user.strip(), new_pass)); st.success("Credenciales actualizadas.")
+
+# =========================
+# MAIN
+# =========================
+if "logged" not in st.session_state: st.session_state.logged=False
+if "page" not in st.session_state: st.session_state.page="Dashboard"
 
 if not st.session_state.logged:
     login()
 else:
     sidebar()
-    pages = {
-        "Dashboard": dashboard,
-        "Lista de precios": lista_precios,
-        "Productos": productos_page,
-        "Venta fraccionada": venta_fraccionada,
-        "Ticket / Cobro": ticket_page,
-        "Clientes": clientes_page,
-        "Proveedores": proveedores_page,
-        "Caja": caja_page,
-        "Ganancias": ganancias_page,
-        "Logística": logistica_page,
-        "Reportes": reportes_page,
-        "Configuración": config_page,
+    pages={
+        "Dashboard":dashboard,
+        "Productos":productos_page,
+        "Venta / Ticket":venta_page,
+        "Clientes":clientes_page,
+        "Proveedores":proveedores_page,
+        "Caja":caja_page,
+        "Ganancias y deudas":ganancias_page,
+        "Logística":logistica_page,
+        "Reportes":reportes_page,
+        "Configuración":config_page,
     }
     pages[st.session_state.page]()
