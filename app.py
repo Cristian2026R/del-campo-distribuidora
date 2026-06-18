@@ -685,11 +685,131 @@ def render_last_ticket():
     v=ventas_df(); venta=v[v.ticket==ticket]
     if venta.empty: return
     row=venta.iloc[0]; items=items_df(); its=items[items.ticket==ticket]
+
     html_items="".join([f"<div>{r.producto_nombre}<span style='float:right'>{money(r.total)}</span><br><small>{r.cantidad_texto}</small></div><div class='ticket-line'></div>" for _,r in its.iterrows()])
     html=f"""<div class='ticket-box'><h2 style='text-align:center'>DON VALENTIN</h2><h3 style='text-align:center'>Ticket</h3><div class='ticket-line'></div><b>N°:</b> {ticket}<br><b>Fecha:</b> {row.fecha}<br><b>Cliente:</b> {row.cliente}<br><b>Pago:</b> {row.metodo_pago}<div class='ticket-line'></div>{html_items}<div style='font-size:22px;font-weight:900;text-align:right'>TOTAL {money(row.total)}</div></div>"""
     st.markdown(html, unsafe_allow_html=True)
-    full=f"""<html><head><meta charset='utf-8'><style>body{{font-family:Arial;padding:20px}}.ticket{{width:320px;margin:auto;border:1px dashed #111;padding:16px}}.line{{border-top:1px dashed #111;margin:10px 0}}@media print{{button{{display:none}}}}</style></head><body><button onclick='window.print()'>Imprimir</button><div class='ticket'><h2 style='text-align:center'>DON VALENTIN</h2><h3 style='text-align:center'>Ticket</h3><div class='line'></div><b>N°:</b> {ticket}<br><b>Fecha:</b> {row.fecha}<br><b>Cliente:</b> {row.cliente}<br><b>Pago:</b> {row.metodo_pago}<div class='line'></div>{'<div class="line"></div>'.join([f'{r.producto_nombre}<span style="float:right">{money(r.total)}</span><br><small>{r.cantidad_texto}</small>' for _,r in its.iterrows()])}<div class='line'></div><h2 style='text-align:right'>TOTAL {money(row.total)}</h2></div></body></html>"""
-    st.download_button("⬇️ Descargar ticket para imprimir", data=full.encode("utf-8"), file_name=f"ticket_{ticket}.html", mime="text/html", use_container_width=True)
+
+    thermal=f"""<html><head><meta charset='utf-8'><style>body{{font-family:Arial;padding:20px}}.ticket{{width:320px;margin:auto;border:1px dashed #111;padding:16px}}.line{{border-top:1px dashed #111;margin:10px 0}}@media print{{button{{display:none}}}}</style></head><body><button onclick='window.print()'>Imprimir</button><div class='ticket'><h2 style='text-align:center'>DON VALENTIN</h2><h3 style='text-align:center'>Ticket</h3><div class='line'></div><b>N°:</b> {ticket}<br><b>Fecha:</b> {row.fecha}<br><b>Cliente:</b> {row.cliente}<br><b>Pago:</b> {row.metodo_pago}<div class='line'></div>{'<div class="line"></div>'.join([f'{r.producto_nombre}<span style="float:right">{money(r.total)}</span><br><small>{r.cantidad_texto}</small>' for _,r in its.iterrows()])}<div class='line'></div><h2 style='text-align:right'>TOTAL {money(row.total)}</h2></div></body></html>"""
+
+    filas_a4="".join([
+        f"""<tr>
+            <td>{r.producto_nombre}</td>
+            <td>{r.cantidad_texto}</td>
+            <td style='text-align:right'>{money(r.precio_unitario)}</td>
+            <td style='text-align:right'>{money(r.total)}</td>
+        </tr>"""
+        for _,r in its.iterrows()
+    ])
+    if not filas_a4:
+        filas_a4="<tr><td colspan='4' style='text-align:center'>Sin productos</td></tr>"
+
+    a4=f"""
+<!doctype html>
+<html>
+<head>
+<meta charset='utf-8'>
+<title>Remito A4 {ticket}</title>
+<style>
+@page {{ size: A4; margin: 14mm; }}
+* {{ box-sizing: border-box; }}
+body {{ font-family: Arial, Helvetica, sans-serif; color:#111; background:#fff; margin:0; }}
+.actions {{ text-align:center; padding:14px; background:#f2f2f2; }}
+.actions button {{ background:#111; color:#fff; border:0; border-radius:8px; padding:12px 22px; font-size:15px; cursor:pointer; }}
+.sheet {{ width: 210mm; min-height: 297mm; margin: 0 auto; padding: 16mm; background:#fff; }}
+.header {{ display:flex; justify-content:space-between; gap:18px; border-bottom:3px solid #111; padding-bottom:18px; }}
+.brand h1 {{ font-size:34px; margin:0; letter-spacing:1px; }}
+.brand .sub {{ font-size:16px; font-weight:700; margin-top:4px; }}
+.docbox {{ border:2px solid #111; padding:14px 18px; min-width:230px; text-align:center; }}
+.docbox h2 {{ margin:0 0 8px; font-size:25px; }}
+.info-grid {{ display:grid; grid-template-columns: 1fr 1fr; gap:14px; margin-top:18px; }}
+.box {{ border:1px solid #111; padding:12px; min-height:86px; }}
+.box h3 {{ margin:0 0 8px; font-size:15px; text-transform:uppercase; border-bottom:1px solid #bbb; padding-bottom:5px; }}
+.row {{ margin:5px 0; font-size:14px; }}
+table {{ width:100%; border-collapse:collapse; margin-top:22px; font-size:14px; }}
+th {{ background:#111; color:#fff; padding:10px; border:1px solid #111; text-align:left; }}
+td {{ padding:10px; border:1px solid #333; vertical-align:top; }}
+.total-wrap {{ display:flex; justify-content:flex-end; margin-top:18px; }}
+.total-box {{ width:45%; border:2px solid #111; padding:16px; }}
+.total-line {{ display:flex; justify-content:space-between; font-size:17px; margin:8px 0; }}
+.total-final {{ font-size:26px; font-weight:900; border-top:2px solid #111; padding-top:12px; margin-top:12px; }}
+.obs {{ margin-top:26px; border:1px solid #111; min-height:90px; padding:12px; }}
+.firmas {{ display:grid; grid-template-columns:1fr 1fr; gap:55px; margin-top:58px; }}
+.firma {{ border-top:2px solid #111; text-align:center; padding-top:10px; font-weight:700; }}
+.footer {{ margin-top:28px; text-align:center; font-size:12px; color:#333; }}
+@media print {{ .actions {{ display:none; }} .sheet {{ margin:0; width:auto; min-height:auto; padding:0; }} body {{ margin:0; }} }}
+</style>
+</head>
+<body>
+<div class='actions'><button onclick='window.print()'>🖨️ Imprimir Remito A4</button></div>
+<div class='sheet'>
+    <div class='header'>
+        <div class='brand'>
+            <h1>DON VALENTIN</h1>
+            <div class='sub'>DISTRIBUIDORA</div>
+            <div style='margin-top:12px;font-size:13px;'>Sistema comercial · Productos gastronómicos</div>
+        </div>
+        <div class='docbox'>
+            <h2>REMITO / TICKET A4</h2>
+            <div><b>N°:</b> {ticket}</div>
+            <div><b>Fecha:</b> {row.fecha}</div>
+        </div>
+    </div>
+
+    <div class='info-grid'>
+        <div class='box'>
+            <h3>Cliente</h3>
+            <div class='row'><b>Nombre:</b> {row.cliente}</div>
+            <div class='row'><b>Condición:</b> {row.metodo_pago}</div>
+        </div>
+        <div class='box'>
+            <h3>Comprobante</h3>
+            <div class='row'><b>Forma de pago:</b> {row.metodo_pago}</div>
+            <div class='row'><b>Total productos:</b> {len(its)}</div>
+        </div>
+    </div>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Producto</th>
+                <th style='width:160px'>Cantidad</th>
+                <th style='width:140px;text-align:right'>Precio unitario</th>
+                <th style='width:140px;text-align:right'>Total</th>
+            </tr>
+        </thead>
+        <tbody>{filas_a4}</tbody>
+    </table>
+
+    <div class='total-wrap'>
+        <div class='total-box'>
+            <div class='total-line'><span>Subtotal</span><b>{money(row.total)}</b></div>
+            <div class='total-line total-final'><span>TOTAL</span><span>{money(row.total)}</span></div>
+        </div>
+    </div>
+
+    <div class='obs'>
+        <b>Observaciones:</b><br><br>
+        _______________________________________________________________________________________<br><br>
+        _______________________________________________________________________________________
+    </div>
+
+    <div class='firmas'>
+        <div class='firma'>Firma cliente</div>
+        <div class='firma'>Firma vendedor</div>
+    </div>
+
+    <div class='footer'>DON VALENTIN DISTRIBUIDORA · Comprobante interno comercial</div>
+</div>
+</body>
+</html>
+"""
+
+    c1,c2=st.columns(2)
+    with c1:
+        st.download_button("⬇️ Descargar ticket térmico", data=thermal.encode("utf-8"), file_name=f"ticket_{ticket}.html", mime="text/html", use_container_width=True)
+    with c2:
+        st.download_button("📄 Descargar Remito A4 completo", data=a4.encode("utf-8"), file_name=f"remito_A4_{ticket}.html", mime="text/html", use_container_width=True)
 
 def clientes_resumen():
     cl=clientes_df(); v=ventas_df(); pagos=pagos_clientes_df(); rows=[]
