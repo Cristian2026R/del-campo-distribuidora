@@ -144,7 +144,14 @@ def init_db():
             precio_unidad REAL DEFAULT 0, precio_kg REAL DEFAULT 0, costo_unidad REAL DEFAULT 0, costo_kg REAL DEFAULT 0,
             stock REAL DEFAULT 0, unidad_stock TEXT DEFAULT 'kg', activo INTEGER DEFAULT 1, actualizado TEXT DEFAULT CURRENT_TIMESTAMP)""")
         c.execute("""CREATE TABLE IF NOT EXISTS clientes(
-            id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT UNIQUE NOT NULL, tipo TEXT DEFAULT '', zona TEXT DEFAULT '', telefono TEXT DEFAULT '', estado TEXT DEFAULT 'Activo', observaciones TEXT DEFAULT '', creado TEXT DEFAULT CURRENT_TIMESTAMP)""")
+            id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT UNIQUE NOT NULL, tipo TEXT DEFAULT '', zona TEXT DEFAULT '', telefono TEXT DEFAULT '', estado TEXT DEFAULT 'Activo', observaciones TEXT DEFAULT '', facturado_inicial REAL DEFAULT 0, pagado_inicial REAL DEFAULT 0, debe_inicial REAL DEFAULT 0, dias_deuda_inicial INTEGER DEFAULT 0, creado TEXT DEFAULT CURRENT_TIMESTAMP)""")
+        
+        # Compatibilidad: si la base ya existía, agregamos campos manuales de cuenta corriente
+        for col, typ in [("facturado_inicial","REAL DEFAULT 0"),("pagado_inicial","REAL DEFAULT 0"),("debe_inicial","REAL DEFAULT 0"),("dias_deuda_inicial","INTEGER DEFAULT 0")]:
+            try:
+                c.execute(f"ALTER TABLE clientes ADD COLUMN {col} {typ}")
+            except Exception:
+                pass
         c.execute("""CREATE TABLE IF NOT EXISTS cliente_pagos(
             id INTEGER PRIMARY KEY AUTOINCREMENT, fecha TEXT, cliente_id INTEGER, monto REAL, medio TEXT, observaciones TEXT)""")
         c.execute("""CREATE TABLE IF NOT EXISTS proveedores(
@@ -443,13 +450,21 @@ def clientes_resumen():
     cl=clientes_df(); v=ventas_df(); pagos=pagos_clientes_df(); rows=[]
     for _,c in cl.iterrows():
         vv=v[v.cliente_id==c.id] if not v.empty else pd.DataFrame(); pp=pagos[pagos.cliente_id==c.id] if not pagos.empty else pd.DataFrame()
-        fact=float(vv.total.sum()) if not vv.empty else 0; pag=float(pp.monto.sum()) if not pp.empty else 0; debe=max(fact-pag,0)
+        fact=float(vv.total.sum()) if not vv.empty else 0
+        pag=float(pp.monto.sum()) if not pp.empty else 0
+        fact_ini=float(getattr(c,"facturado_inicial",0) or 0)
+        pag_ini=float(getattr(c,"pagado_inicial",0) or 0)
+        debe_ini=float(getattr(c,"debe_inicial",0) or 0)
+        fact += fact_ini
+        pag += pag_ini
+        debe=max((fact-pag)+debe_ini,0)
         debt_dates=[]
         if not vv.empty:
             for _,r in vv[vv.pagado < vv.total].iterrows():
                 dt=parse_dt(r.fecha)
                 if dt: debt_dates.append(dt)
         dias=max([(datetime.now()-d).days for d in debt_dates], default=0)
+        dias=max(dias, int(getattr(c,"dias_deuda_inicial",0) or 0))
         rows.append({"id":c.id,"Cliente":c.nombre,"Facturado":fact,"Pagado":pag,"Debe":debe,"Facturado $":money(fact),"Pagado $":money(pag),"Debe $":money(debe),"Días deuda":dias,"Alerta":"⚠️ Más de 7 días sin pagar" if debe>0 and dias>=7 else "OK"})
     return pd.DataFrame(rows)
 
@@ -457,13 +472,25 @@ def clientes_page():
     banner(); header("Clientes", "Alta, edición, eliminación, pagos parciales, deuda y alertas.")
     with st.expander("➕ Agregar cliente", expanded=False):
         c1,c2,c3=st.columns(3)
-        with c1: n=st.text_input("Nombre cliente"); tel=st.text_input("Teléfono")
-        with c2: tipo=st.text_input("Tipo", value="Cliente"); zona=st.text_input("Zona")
-        with c3: estado=st.selectbox("Estado",["Activo","Inactivo","Cuenta corriente"]); obs=st.text_area("Observaciones")
+        with c1:
+            n=st.text_input("Nombre cliente")
+            tel=st.text_input("Teléfono")
+        with c2:
+            tipo=st.text_input("Tipo", value="Cliente")
+            zona=st.text_input("Zona")
+        with c3:
+            estado=st.selectbox("Estado",["Activo","Inactivo","Cuenta corriente"])
+            obs=st.text_area("Observaciones")
+        st.markdown("### 💳 Saldo inicial del cliente")
+        s1,s2,s3,s4=st.columns(4)
+        with s1: fact_ini=st.number_input("Facturado inicial",0.0,step=100.0,key="alta_fact_ini")
+        with s2: pag_ini=st.number_input("Pagado inicial",0.0,step=100.0,key="alta_pag_ini")
+        with s3: debe_ini=st.number_input("Debe inicial",0.0,step=100.0,key="alta_debe_ini")
+        with s4: dias_ini=st.number_input("Días deuda inicial",0,step=1,key="alta_dias_ini")
         if st.button("Guardar cliente", use_container_width=True):
             if n.strip():
-                exec_sql("INSERT OR IGNORE INTO clientes(nombre,tipo,zona,telefono,estado,observaciones) VALUES(?,?,?,?,?,?)", (n,tipo,zona,tel,estado,obs))
-                log_event("Clientes", "Alta cliente", n)
+                exec_sql("INSERT OR IGNORE INTO clientes(nombre,tipo,zona,telefono,estado,observaciones,facturado_inicial,pagado_inicial,debe_inicial,dias_deuda_inicial) VALUES(?,?,?,?,?,?,?,?,?,?)", (n,tipo,zona,tel,estado,obs,fact_ini,pag_ini,debe_ini,int(dias_ini)))
+                log_event("Clientes", "Alta cliente", f"{n} · Facturado inicial {money(fact_ini)} · Pagado inicial {money(pag_ini)} · Debe inicial {money(debe_ini)}")
                 st.success("Cliente guardado."); st.rerun()
     cl=clientes_df(); res=clientes_resumen()
     if not res.empty: st.dataframe(res[["Cliente","Facturado $","Pagado $","Debe $","Días deuda","Alerta"]],use_container_width=True,hide_index=True)
@@ -476,9 +503,15 @@ def clientes_page():
     with c1: en=st.text_input("Nombre",value=row.nombre); etel=st.text_input("Teléfono",value=row.telefono)
     with c2: etipo=st.text_input("Tipo",value=row.tipo); ezona=st.text_input("Zona",value=row.zona)
     with c3: eest=st.selectbox("Estado cliente",["Activo","Inactivo","Cuenta corriente"], index=["Activo","Inactivo","Cuenta corriente"].index(row.estado) if row.estado in ["Activo","Inactivo","Cuenta corriente"] else 0); eobs=st.text_area("Observaciones cliente", value=row.observaciones)
+    st.markdown("### ✏️ Editar saldo inicial / cuenta corriente")
+    sc1,sc2,sc3,sc4=st.columns(4)
+    with sc1: efact=st.number_input("Editar facturado",0.0,value=float(getattr(row,"facturado_inicial",0) or 0),step=100.0,key=f"efact_{cid}")
+    with sc2: epag=st.number_input("Editar pagado",0.0,value=float(getattr(row,"pagado_inicial",0) or 0),step=100.0,key=f"epag_{cid}")
+    with sc3: edebe=st.number_input("Editar debe",0.0,value=float(getattr(row,"debe_inicial",0) or 0),step=100.0,key=f"edebe_{cid}")
+    with sc4: edias=st.number_input("Editar días deuda",0,value=int(getattr(row,"dias_deuda_inicial",0) or 0),step=1,key=f"edias_{cid}")
     a,b=st.columns(2)
     if a.button("💾 Guardar cambios cliente", use_container_width=True):
-        exec_sql("UPDATE clientes SET nombre=?,tipo=?,zona=?,telefono=?,estado=?,observaciones=? WHERE id=?", (en,etipo,ezona,etel,eest,eobs,int(cid)))
+        exec_sql("UPDATE clientes SET nombre=?,tipo=?,zona=?,telefono=?,estado=?,observaciones=?,facturado_inicial=?,pagado_inicial=?,debe_inicial=?,dias_deuda_inicial=? WHERE id=?", (en,etipo,ezona,etel,eest,eobs,efact,epag,edebe,int(edias),int(cid)))
         log_event("Clientes", "Edición cliente", en)
         st.success("Cliente actualizado."); st.rerun()
     if b.button("🗑️ Eliminar cliente", use_container_width=True):
