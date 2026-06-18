@@ -360,34 +360,36 @@ def venta_page():
         pr=prods[prods.id==pid].iloc[0]
         modo=st.radio("Modo",["Por gramos","Por litros","Por unidad"],horizontal=True)
         if modo=="Por gramos":
-            gramos=st.number_input("Peso exacto en gramos", min_value=1.0, max_value=50000.0, value=100.0, step=1.0)
+            gramos=st.number_input("Peso exacto en gramos", min_value=1.0, max_value=50000.0, value=100.0, step=1.0, key=f"gramos_{pid}")
             cantidad_base=gramos/1000
             cantidad_txt=f"{gramos:g} g" if gramos<1000 else f"{gramos/1000:g} kg"
-            precio_unit_auto=float(pr.precio_kg or 0)
-            costo_unit=float(pr.costo_kg or 0)
+            # Precio automático: primero precio por kg; si no existe, usa precio unidad para evitar $0.
+            precio_unit_auto=float(pr.precio_kg or pr.precio_unidad or 0)
+            costo_unit=float(pr.costo_kg or pr.costo_unidad or 0)
             precio_label="Precio por kg"
         elif modo=="Por litros":
-            litros=st.number_input("Litros exactos", min_value=0.01, value=1.0, step=0.01, format="%.2f")
+            litros=st.number_input("Litros exactos", min_value=0.01, value=1.0, step=0.01, format="%.2f", key=f"litros_{pid}")
             cantidad_base=litros
             cantidad_txt=f"{litros:g} lts"
-            # Para litros usamos precio_unidad como precio por litro editable.
-            # Si el cliente necesita otro importe, lo corrige abajo antes de agregar al ticket.
+            # Precio automático para litros: primero precio unidad; si no existe, usa precio kg.
             precio_unit_auto=float(pr.precio_unidad or pr.precio_kg or 0)
             costo_unit=float(pr.costo_unidad or pr.costo_kg or 0)
             precio_label="Precio por litro"
         else:
-            unidades=st.number_input("Unidades", min_value=1.0, value=1.0, step=1.0)
+            unidades=st.number_input("Unidades", min_value=1.0, value=1.0, step=1.0, key=f"unidades_{pid}")
             cantidad_base=unidades
             cantidad_txt=f"{unidades:g} u."
-            precio_unit_auto=float(pr.precio_unidad or 0)
-            costo_unit=float(pr.costo_unidad or 0)
+            precio_unit_auto=float(pr.precio_unidad or pr.precio_kg or 0)
+            costo_unit=float(pr.costo_unidad or pr.costo_kg or 0)
             precio_label="Precio por unidad"
         st.markdown("#### ✍️ Edición manual antes de agregar")
         st.caption("El sistema calcula el total automáticamente con el producto, cliente y precio elegido. Si hace falta, podés corregir producto, precio o total manualmente antes de agregarlo al ticket.")
-        nombre_ticket=st.text_input("Nombre del producto en ticket", value=str(pr.nombre))
-        precio_unit=st.number_input(precio_label, value=float(precio_unit_auto), step=100.0)
+        nombre_ticket=st.text_input("Nombre del producto en ticket", value=str(pr.nombre), key=f"nombre_ticket_{pid}_{modo}")
+        precio_key=f"precio_ticket_{pid}_{modo}_{float(cantidad_base):.3f}"
+        precio_unit=st.number_input(precio_label, value=float(precio_unit_auto), step=100.0, key=precio_key)
         total_auto=precio_unit*cantidad_base
-        total_manual=st.number_input("Total del producto", value=float(round(total_auto,2)), step=100.0)
+        total_key=f"total_ticket_{pid}_{modo}_{float(cantidad_base):.3f}_{float(precio_unit):.2f}"
+        total_manual=st.number_input("Total del producto", value=float(round(total_auto,2)), step=100.0, key=total_key)
         costo=costo_unit*cantidad_base
         kpi("Subtotal automático / editable", money(total_manual), f"{nombre_ticket} · {cantidad_txt}")
         if st.button("➕ Agregar al ticket", use_container_width=True):
@@ -563,6 +565,31 @@ def proveedores_page():
                 exec_sql("DELETE FROM proveedores WHERE id=?",(int(pid),))
                 log_event("Proveedores", "Eliminación proveedor", str(row.nombre))
                 st.success("Proveedor eliminado."); st.rerun()
+
+        st.subheader("💸 Registrar pago al proveedor seleccionado")
+        st.caption("Seleccionás el proveedor arriba y acá cargás un pago manual: por bolsa, litro, unidad, caja o el total directo. También queda reflejado como egreso de caja.")
+        p1,p2,p3=st.columns(3)
+        with p1:
+            pago_prod=st.text_input("Producto / concepto del pago", placeholder="Ej: Harina 000 25kg", key=f"pago_prod_{pid}")
+            pago_unidad=st.selectbox("Unidad del pago", ["bolsa","litro","unidad","caja","kg","bulto","otro"], key=f"pago_unidad_{pid}")
+        with p2:
+            pago_cant=st.number_input("Cantidad pagada", min_value=0.0, step=1.0, key=f"pago_cant_{pid}")
+            pago_unit=st.number_input("Precio/costo por unidad", min_value=0.0, step=100.0, key=f"pago_unit_{pid}")
+        with p3:
+            pago_auto=float(pago_cant)*float(pago_unit)
+            pago_monto=st.number_input("Total pagado", min_value=0.0, value=float(pago_auto), step=100.0, key=f"pago_monto_{pid}_{pago_auto}")
+            pago_medio=st.selectbox("Medio de pago proveedor", ["Efectivo","Transferencia","Mercado Pago","Cheque","Otro"], key=f"pago_medio_{pid}")
+        pago_obs=st.text_input("Observación del pago", placeholder="Ej: pago parcial / cancelación / anticipo", key=f"pago_obs_{pid}")
+        if st.button("Guardar pago al proveedor seleccionado", use_container_width=True, key=f"guardar_pago_proveedor_{pid}"):
+            if pago_monto>0:
+                detalle_pago=f"{pago_prod} · {pago_cant:g} {pago_unidad} · {pago_obs}".strip()
+                exec_sql("INSERT INTO proveedor_pagos(fecha,proveedor_id,monto,medio,observaciones) VALUES(?,?,?,?,?)", (now_str(),int(pid),float(pago_monto),pago_medio,detalle_pago))
+                exec_sql("INSERT INTO caja(fecha,tipo,concepto,monto,medio,observaciones) VALUES(?,?,?,?,?,?)", (now_str(),"Egreso",f"Pago proveedor {labels.get(str(pid),'')}",float(pago_monto),pago_medio,detalle_pago))
+                log_event("Proveedores", "Pago proveedor", f"{labels.get(str(pid),'')} · {money(pago_monto)} · {detalle_pago}")
+                log_event("Caja", "Egreso proveedor", f"{labels.get(str(pid),'')} · {money(pago_monto)}")
+                st.success("Pago guardado y egreso registrado en caja."); st.rerun()
+            else:
+                st.warning("Ingresá un total pagado mayor a cero.")
         st.subheader("🧾 Cargar compra manual")
         c1,c2,c3=st.columns(3)
         with c1: prod=st.text_input("Producto comprado manual", placeholder="Ej: Harina 000 25kg")
