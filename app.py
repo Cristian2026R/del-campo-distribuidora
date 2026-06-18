@@ -228,6 +228,32 @@ def ventas_df(): return df_query("SELECT v.*, c.nombre cliente FROM ventas v LEF
 def items_df(): return df_query("SELECT vi.*, v.fecha, v.ticket, c.nombre cliente FROM venta_items vi LEFT JOIN ventas v ON v.id=vi.venta_id LEFT JOIN clientes c ON c.id=v.cliente_id ORDER BY vi.id DESC")
 def pagos_clientes_df(): return df_query("SELECT p.*, c.nombre cliente FROM cliente_pagos p LEFT JOIN clientes c ON c.id=p.cliente_id ORDER BY p.id DESC")
 def pagos_proveedores_df(): return df_query("SELECT p.*, pr.nombre proveedor FROM proveedor_pagos p LEFT JOIN proveedores pr ON pr.id=p.proveedor_id ORDER BY p.id DESC")
+
+
+def proveedores_resumen():
+    pr = proveedores_df()
+    compras = compras_df()
+    pagos = pagos_proveedores_df()
+    rows = []
+    for _, r in pr.iterrows():
+        cc = compras[compras.proveedor_id == r.id] if not compras.empty else pd.DataFrame()
+        pp = pagos[pagos.proveedor_id == r.id] if not pagos.empty else pd.DataFrame()
+        comprado = float(cc.costo_total.sum()) if not cc.empty else 0
+        pagado = float(pp.monto.sum()) if not pp.empty else 0
+        debe = max(comprado - pagado, 0)
+        rows.append({
+            "id": int(r.id),
+            "Proveedor": r.nombre,
+            "Teléfono": r.telefono,
+            "Zona": r.zona,
+            "Comprado": comprado,
+            "Pagado": pagado,
+            "Debe": debe,
+            "Comprado $": money(comprado),
+            "Pagado $": money(pagado),
+            "Debe $": money(debe),
+        })
+    return pd.DataFrame(rows)
 def logistica_df(): return df_query("SELECT l.*, c.nombre cliente FROM logistica l LEFT JOIN clientes c ON c.id=l.cliente_id ORDER BY fecha DESC, id DESC")
 
 # =========================
@@ -523,6 +549,14 @@ def clientes_page():
     st.subheader("💵 Registrar pago parcial")
     pago_cid_str=st.selectbox("Cliente que realiza el pago", list(labels.keys()), format_func=lambda x: labels.get(str(x),str(x)), key="pago_cliente_select")
     pago_cid=selected_int(pago_cid_str)
+    estado_cliente = res[res.id == pago_cid] if not res.empty else pd.DataFrame()
+    if not estado_cliente.empty:
+        er = estado_cliente.iloc[0]
+        m1,m2,m3,m4 = st.columns(4)
+        m1.metric("Facturado actual", money(er.Facturado))
+        m2.metric("Pagado actual", money(er.Pagado))
+        m3.metric("Debe actual", money(er.Debe))
+        m4.metric("Días deuda", int(er["Días deuda"]))
     c1,c2,c3=st.columns(3)
     with c1: monto=st.number_input("Monto pago",0.0,step=100.0)
     with c2: medio=st.selectbox("Medio pago",["Efectivo","Transferencia","Mercado Pago","Cheque","Otro"])
@@ -538,72 +572,119 @@ def clientes_page():
             exec_sql("DELETE FROM cliente_pagos WHERE id=?",(int(did),)); log_event("Clientes", "Eliminación pago cliente", f"Pago ID {did}"); st.rerun()
 
 def proveedores_page():
-    banner(); header("Proveedores", "Agregar, editar, eliminar proveedores, compras manuales, pagos y deudas.")
+    banner(); header("Proveedores", "Lista de proveedores, edición, pagos parciales/totales, compras y deuda.")
+
     with st.expander("➕ Agregar proveedor", expanded=False):
-        n=st.text_input("Nombre proveedor"); tel=st.text_input("Teléfono proveedor"); zona=st.text_input("Zona proveedor"); obs=st.text_area("Observaciones proveedor")
-        if st.button("Guardar proveedor") and n.strip():
+        n=st.text_input("Nombre proveedor")
+        tel=st.text_input("Teléfono proveedor")
+        zona=st.text_input("Zona proveedor")
+        obs=st.text_area("Observaciones proveedor")
+        if st.button("Guardar proveedor", use_container_width=True) and n.strip():
             exec_sql("INSERT OR IGNORE INTO proveedores(nombre,telefono,zona,observaciones) VALUES(?,?,?,?)", (n,tel,zona,obs))
             log_event("Proveedores", "Alta proveedor", n)
             st.success("Proveedor guardado."); st.rerun()
-    pr=proveedores_df(); labels=id_label(pr) if not pr.empty else {}
-    if not pr.empty: st.dataframe(pr,use_container_width=True,hide_index=True)
-    if labels:
-        pid_str=st.selectbox("Proveedor para editar/eliminar", list(labels.keys()), format_func=lambda x: labels.get(str(x),str(x)))
-        pid=selected_int(pid_str)
-        row=pr[pr.id==pid]
-        if not row.empty:
-            row=row.iloc[0]
-            c1,c2=st.columns(2)
-            with c1: en=st.text_input("Editar nombre proveedor",value=str(row.nombre)); etel=st.text_input("Editar teléfono",value=str(row.telefono))
-            with c2: ez=st.text_input("Editar zona",value=str(row.zona)); eo=st.text_area("Editar observaciones",value=str(row.observaciones))
-            a,b=st.columns(2)
-            if a.button("Guardar proveedor",use_container_width=True):
-                exec_sql("UPDATE proveedores SET nombre=?,telefono=?,zona=?,observaciones=? WHERE id=?",(en,etel,ez,eo,int(pid)))
-                log_event("Proveedores", "Edición proveedor", en)
-                st.success("Proveedor actualizado."); st.rerun()
-            if b.button("Eliminar proveedor",use_container_width=True):
-                exec_sql("DELETE FROM proveedores WHERE id=?",(int(pid),))
-                log_event("Proveedores", "Eliminación proveedor", str(row.nombre))
-                st.success("Proveedor eliminado."); st.rerun()
 
-        st.subheader("💸 Registrar pago al proveedor seleccionado")
-        st.caption("Seleccionás el proveedor arriba y acá cargás un pago manual: por bolsa, litro, unidad, caja o el total directo. También queda reflejado como egreso de caja.")
-        p1,p2,p3=st.columns(3)
-        with p1:
-            pago_prod=st.text_input("Producto / concepto del pago", placeholder="Ej: Harina 000 25kg", key=f"pago_prod_{pid}")
-            pago_unidad=st.selectbox("Unidad del pago", ["bolsa","litro","unidad","caja","kg","bulto","otro"], key=f"pago_unidad_{pid}")
-        with p2:
-            pago_cant=st.number_input("Cantidad pagada", min_value=0.0, step=1.0, key=f"pago_cant_{pid}")
-            pago_unit=st.number_input("Precio/costo por unidad", min_value=0.0, step=100.0, key=f"pago_unit_{pid}")
-        with p3:
-            pago_auto=float(pago_cant)*float(pago_unit)
-            pago_monto=st.number_input("Total pagado", min_value=0.0, value=float(pago_auto), step=100.0, key=f"pago_monto_{pid}_{pago_auto}")
-            pago_medio=st.selectbox("Medio de pago proveedor", ["Efectivo","Transferencia","Mercado Pago","Cheque","Otro"], key=f"pago_medio_{pid}")
-        pago_obs=st.text_input("Observación del pago", placeholder="Ej: pago parcial / cancelación / anticipo", key=f"pago_obs_{pid}")
-        if st.button("Guardar pago al proveedor seleccionado", use_container_width=True, key=f"guardar_pago_proveedor_{pid}"):
-            if pago_monto>0:
-                detalle_pago=f"{pago_prod} · {pago_cant:g} {pago_unidad} · {pago_obs}".strip()
-                exec_sql("INSERT INTO proveedor_pagos(fecha,proveedor_id,monto,medio,observaciones) VALUES(?,?,?,?,?)", (now_str(),int(pid),float(pago_monto),pago_medio,detalle_pago))
-                exec_sql("INSERT INTO caja(fecha,tipo,concepto,monto,medio,observaciones) VALUES(?,?,?,?,?,?)", (now_str(),"Egreso",f"Pago proveedor {labels.get(str(pid),'')}",float(pago_monto),pago_medio,detalle_pago))
-                log_event("Proveedores", "Pago proveedor", f"{labels.get(str(pid),'')} · {money(pago_monto)} · {detalle_pago}")
-                log_event("Caja", "Egreso proveedor", f"{labels.get(str(pid),'')} · {money(pago_monto)}")
-                st.success("Pago guardado y egreso registrado en caja."); st.rerun()
-            else:
-                st.warning("Ingresá un total pagado mayor a cero.")
-        st.subheader("🧾 Cargar compra manual")
-        c1,c2,c3=st.columns(3)
-        with c1: prod=st.text_input("Producto comprado manual", placeholder="Ej: Harina 000 25kg")
-        with c2: cant=st.number_input("Cantidad comprada",0.0,step=1.0); unidad=st.selectbox("Unidad compra",["kg","litro","unidad","bolsa","caja","bulto"])
-        with c3: costo=st.number_input("Costo total",0.0,step=100.0); pag=st.number_input("Pagado al proveedor",0.0,step=100.0)
-        det=st.text_input("Detalle compra")
-        if st.button("Guardar compra proveedor",use_container_width=True):
-            exec_sql("INSERT INTO compras(fecha,proveedor_id,producto,cantidad,unidad,costo_total,pagado,detalle) VALUES(?,?,?,?,?,?,?,?)",(now_str(),int(pid),prod,cant,unidad,costo,pag,det))
-            log_event("Proveedores", "Compra proveedor", f"{labels.get(str(pid),'')} · {prod} · {cant} {unidad} · {money(costo)}")
-            if pag>0:
-                exec_sql("INSERT INTO proveedor_pagos(fecha,proveedor_id,monto,medio,observaciones) VALUES(?,?,?,?,?)",(now_str(),int(pid),pag,"Transferencia",f"Pago compra {prod}"))
-                exec_sql("INSERT INTO caja(fecha,tipo,concepto,monto,medio,observaciones) VALUES(?,?,?,?,?,?)",(now_str(),"Egreso",f"Pago proveedor {labels.get(str(pid),'')}",pag,"Transferencia",prod))
-                log_event("Caja", "Egreso proveedor", f"{labels.get(str(pid),'')} · {money(pag)}")
-            st.success("Compra guardada."); st.rerun()
+    pr=proveedores_df()
+    if pr.empty:
+        st.info("Todavía no hay proveedores cargados. Agregá el primero arriba.")
+        return
+
+    resumen = proveedores_resumen()
+    st.subheader("📋 Proveedores cargados")
+    st.dataframe(resumen[["Proveedor","Teléfono","Zona","Comprado $","Pagado $","Debe $"]], use_container_width=True, hide_index=True)
+
+    labels=id_label(pr)
+    st.subheader("🔎 Seleccionar proveedor")
+    pid_str=st.selectbox("Proveedor", list(labels.keys()), format_func=lambda x: labels.get(str(x),str(x)), key="proveedor_principal_select")
+    pid=selected_int(pid_str)
+    row_df=pr[pr.id==pid]
+    if row_df.empty:
+        st.warning("Seleccioná un proveedor válido.")
+        return
+    row=row_df.iloc[0]
+
+    estado = resumen[resumen.id == pid] if not resumen.empty else pd.DataFrame()
+    if not estado.empty:
+        er=estado.iloc[0]
+        m1,m2,m3=st.columns(3)
+        m1.metric("Comprado al proveedor", money(er.Comprado))
+        m2.metric("Pagado al proveedor", money(er.Pagado))
+        m3.metric("Saldo pendiente", money(er.Debe))
+
+    st.markdown("### ✏️ Editar datos del proveedor seleccionado")
+    c1,c2=st.columns(2)
+    with c1:
+        en=st.text_input("Editar nombre proveedor",value=str(row.nombre), key=f"prov_nombre_{pid}")
+        etel=st.text_input("Editar teléfono",value=str(row.telefono), key=f"prov_tel_{pid}")
+    with c2:
+        ez=st.text_input("Editar zona",value=str(row.zona), key=f"prov_zona_{pid}")
+        eo=st.text_area("Editar observaciones",value=str(row.observaciones), key=f"prov_obs_{pid}")
+    a,b=st.columns(2)
+    if a.button("💾 Guardar proveedor",use_container_width=True, key=f"guardar_proveedor_{pid}"):
+        exec_sql("UPDATE proveedores SET nombre=?,telefono=?,zona=?,observaciones=? WHERE id=?",(en,etel,ez,eo,int(pid)))
+        log_event("Proveedores", "Edición proveedor", en)
+        st.success("Proveedor actualizado."); st.rerun()
+    if b.button("🗑️ Eliminar proveedor",use_container_width=True, key=f"eliminar_proveedor_{pid}"):
+        exec_sql("DELETE FROM proveedores WHERE id=?",(int(pid),))
+        log_event("Proveedores", "Eliminación proveedor", str(row.nombre))
+        st.success("Proveedor eliminado."); st.rerun()
+
+    st.markdown("### 💸 Registrar pago al proveedor")
+    st.caption("Elegí el proveedor en esta misma sección, cargá el pago parcial o total y el sistema lo registra también como egreso de caja.")
+    pago_pid_str=st.selectbox("Proveedor que recibe el pago", list(labels.keys()), index=list(labels.keys()).index(str(pid)) if str(pid) in labels else 0, format_func=lambda x: labels.get(str(x),str(x)), key="pago_proveedor_select_independiente")
+    pago_pid=selected_int(pago_pid_str)
+    estado_pago = resumen[resumen.id == pago_pid] if not resumen.empty else pd.DataFrame()
+    if not estado_pago.empty:
+        prr=estado_pago.iloc[0]
+        q1,q2,q3=st.columns(3)
+        q1.metric("Comprado", money(prr.Comprado))
+        q2.metric("Pagado", money(prr.Pagado))
+        q3.metric("Debe", money(prr.Debe))
+
+    p1,p2,p3=st.columns(3)
+    with p1:
+        pago_prod=st.text_input("Producto / concepto del pago", placeholder="Ej: Harina 000 25kg", key=f"pago_prod_{pago_pid}")
+        pago_unidad=st.selectbox("Unidad del pago", ["bolsa","litro","unidad","caja","kg","bulto","otro"], key=f"pago_unidad_{pago_pid}")
+    with p2:
+        pago_cant=st.number_input("Cantidad pagada", min_value=0.0, step=1.0, key=f"pago_cant_{pago_pid}")
+        pago_unit=st.number_input("Precio/costo por unidad", min_value=0.0, step=100.0, key=f"pago_unit_{pago_pid}")
+    with p3:
+        pago_auto=float(pago_cant)*float(pago_unit)
+        pago_monto=st.number_input("Total pagado", min_value=0.0, value=float(pago_auto), step=100.0, key=f"pago_monto_{pago_pid}_{pago_auto}")
+        pago_medio=st.selectbox("Medio de pago proveedor", ["Efectivo","Transferencia","Mercado Pago","Cheque","Otro"], key=f"pago_medio_{pago_pid}")
+    pago_obs=st.text_input("Observación del pago", placeholder="Ej: pago parcial / cancelación / anticipo", key=f"pago_obs_{pago_pid}")
+    if st.button("Guardar pago al proveedor", use_container_width=True, key=f"guardar_pago_proveedor_{pago_pid}"):
+        if pago_monto>0:
+            detalle_pago=f"{pago_prod} · {pago_cant:g} {pago_unidad} · {pago_obs}".strip()
+            exec_sql("INSERT INTO proveedor_pagos(fecha,proveedor_id,monto,medio,observaciones) VALUES(?,?,?,?,?)", (now_str(),int(pago_pid),float(pago_monto),pago_medio,detalle_pago))
+            exec_sql("INSERT INTO caja(fecha,tipo,concepto,monto,medio,observaciones) VALUES(?,?,?,?,?,?)", (now_str(),"Egreso",f"Pago proveedor {labels.get(str(pago_pid),'')}",float(pago_monto),pago_medio,detalle_pago))
+            log_event("Proveedores", "Pago proveedor", f"{labels.get(str(pago_pid),'')} · {money(pago_monto)} · {detalle_pago}")
+            log_event("Caja", "Egreso proveedor", f"{labels.get(str(pago_pid),'')} · {money(pago_monto)}")
+            st.success("Pago guardado y egreso registrado en caja."); st.rerun()
+        else:
+            st.warning("Ingresá un total pagado mayor a cero.")
+
+    st.markdown("### 🧾 Cargar compra manual")
+    compra_pid_str=st.selectbox("Proveedor de la compra", list(labels.keys()), index=list(labels.keys()).index(str(pid)) if str(pid) in labels else 0, format_func=lambda x: labels.get(str(x),str(x)), key="compra_proveedor_select_independiente")
+    compra_pid=selected_int(compra_pid_str)
+    c1,c2,c3=st.columns(3)
+    with c1: prod=st.text_input("Producto comprado manual", placeholder="Ej: Harina 000 25kg", key=f"compra_prod_{compra_pid}")
+    with c2:
+        cant=st.number_input("Cantidad comprada",0.0,step=1.0,key=f"compra_cant_{compra_pid}")
+        unidad=st.selectbox("Unidad compra",["kg","litro","unidad","bolsa","caja","bulto"],key=f"compra_unidad_{compra_pid}")
+    with c3:
+        costo=st.number_input("Costo total",0.0,step=100.0,key=f"compra_costo_{compra_pid}")
+        pag=st.number_input("Pagado al proveedor",0.0,step=100.0,key=f"compra_pagado_{compra_pid}")
+    det=st.text_input("Detalle compra", key=f"compra_detalle_{compra_pid}")
+    if st.button("Guardar compra proveedor",use_container_width=True,key=f"guardar_compra_{compra_pid}"):
+        exec_sql("INSERT INTO compras(fecha,proveedor_id,producto,cantidad,unidad,costo_total,pagado,detalle) VALUES(?,?,?,?,?,?,?,?)",(now_str(),int(compra_pid),prod,cant,unidad,costo,pag,det))
+        log_event("Proveedores", "Compra proveedor", f"{labels.get(str(compra_pid),'')} · {prod} · {cant} {unidad} · {money(costo)}")
+        if pag>0:
+            exec_sql("INSERT INTO proveedor_pagos(fecha,proveedor_id,monto,medio,observaciones) VALUES(?,?,?,?,?)",(now_str(),int(compra_pid),pag,"Transferencia",f"Pago compra {prod}"))
+            exec_sql("INSERT INTO caja(fecha,tipo,concepto,monto,medio,observaciones) VALUES(?,?,?,?,?,?)",(now_str(),"Egreso",f"Pago proveedor {labels.get(str(compra_pid),'')}",pag,"Transferencia",prod))
+            log_event("Caja", "Egreso proveedor", f"{labels.get(str(compra_pid),'')} · {money(pag)}")
+        st.success("Compra guardada."); st.rerun()
+
     compras=compras_df(); pagos=pagos_proveedores_df()
     if not compras.empty:
         st.subheader("Compras cargadas")
