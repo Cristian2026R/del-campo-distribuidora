@@ -599,9 +599,6 @@ def venta_page():
         cid_str=st.selectbox("Cliente", list(labels_c.keys()), format_func=lambda x: labels_c.get(str(x),str(x)))
         cid=selected_int(cid_str)
         metodo=st.selectbox("Método de pago",["Efectivo","Transferencia","Mercado Pago","Cuenta corriente"])
-        pagado=0.0
-        if metodo=="Cuenta corriente":
-            pagado=st.number_input("Monto pagado ahora (parcial)",0.0,step=100.0)
         producto_opts=["0"]+list(labels_p.keys())
         pid_str=st.selectbox("Producto", producto_opts, index=0, format_func=lambda x: "Seleccionar producto" if str(x)=="0" else labels_p.get(str(x),str(x)))
         pid=selected_int(pid_str)
@@ -649,6 +646,44 @@ def venta_page():
             st.dataframe(cart[["producto_nombre","cantidad_texto","precio_unitario","Total $"]],use_container_width=True,hide_index=True)
             total=sum(float(i["total"]) for i in st.session_state.cart)
             st.metric("Total",money(total))
+
+            # Cuenta corriente / pago recibido antes de confirmar remito o ticket
+            resumen_cliente_actual = clientes_resumen()
+            saldo_anterior_cliente = 0.0
+            if not resumen_cliente_actual.empty:
+                rr = resumen_cliente_actual[resumen_cliente_actual["id"] == int(cid)]
+                if not rr.empty:
+                    saldo_anterior_cliente = float(rr.iloc[0].get("Debe", 0) or 0)
+
+            st.markdown("### 💵 Pago recibido para este pedido")
+            estado_cobro = st.selectbox(
+                "Estado de cobro",
+                ["Pagó total", "No pagó", "Pago parcial / manual"],
+                index=1 if metodo == "Cuenta corriente" else 0,
+                help="Usá 'No pagó' cuando el cliente se lleva mercadería y queda todo pendiente en cuenta corriente."
+            )
+            if estado_cobro == "Pagó total":
+                pagado = float(total)
+                st.info(f"Pago recibido: {money(pagado)}")
+            elif estado_cobro == "No pagó":
+                pagado = 0.0
+                st.warning("Pago recibido: $ 0. El pedido se suma completo al saldo del cliente.")
+            else:
+                pagado = st.number_input("Monto pagado ahora", min_value=0.0, value=0.0, step=100.0)
+                if pagado > total:
+                    st.warning("El pago ingresado es mayor al total del pedido. Revisá si corresponde a pago de deuda anterior.")
+
+            saldo_actual_preview = saldo_anterior_cliente + float(total) - float(pagado)
+            st.markdown(f"""
+            <div class='card'>
+                <b>Cuenta corriente previa al remito</b><br>
+                Saldo anterior: <b>{money(saldo_anterior_cliente)}</b><br>
+                Pedido actual: <b>{money(total)}</b><br>
+                Pago recibido: <b>{money(pagado)}</b><br>
+                Saldo actualizado estimado: <b>{money(saldo_actual_preview)}</b>
+            </div>
+            """, unsafe_allow_html=True)
+
             with st.expander("✏️ Editar / eliminar producto del ticket", expanded=False):
                 idx=st.selectbox("Producto del ticket", list(range(len(st.session_state.cart))), format_func=lambda i: f"{i+1}. {st.session_state.cart[i]['producto_nombre']} - {money(st.session_state.cart[i]['total'])}")
                 item=st.session_state.cart[idx]
@@ -667,7 +702,7 @@ def venta_page():
             if a.button("Vaciar", use_container_width=True): st.session_state.cart=[]; st.rerun()
             if b.button("Confirmar venta", use_container_width=True):
                 ticket="T-"+datetime.now().strftime("%Y%m%d%H%M%S")
-                paid=total if metodo!="Cuenta corriente" else pagado
+                paid=float(pagado)
                 with sqlite3.connect(DB) as conn:
                     cur=conn.cursor(); cur.execute("INSERT INTO ventas(ticket,fecha,cliente_id,metodo_pago,total,pagado) VALUES(?,?,?,?,?,?)", (ticket,now_str(),int(cid),metodo,total,paid)); vid=cur.lastrowid
                     for item in st.session_state.cart:
@@ -677,7 +712,7 @@ def venta_page():
                         cur.execute("INSERT INTO cliente_pagos(fecha,cliente_id,monto,medio,observaciones) VALUES(?,?,?,?,?)", (now_str(),int(cid),paid,metodo,f"Pago ticket {ticket}"))
                         cur.execute("INSERT INTO caja(fecha,tipo,concepto,monto,medio,observaciones) VALUES(?,?,?,?,?,?)", (now_str(),"Ingreso",f"Cobro ticket {ticket}",paid,metodo,labels_c.get(str(cid),"")))
                     conn.commit()
-                log_event("Ventas", "Ticket generado", f"{ticket} · Cliente {labels_c.get(str(cid),'')} · Total {money(total)} · Stock descontado")
+                log_event("Ventas", "Ticket generado", f"{ticket} · Cliente {labels_c.get(str(cid),'')} · Total {money(total)} · Pago {money(paid)} · Saldo generado {money(total-paid)} · Stock descontado")
                 st.session_state.last_ticket=ticket; st.session_state.cart=[]; st.success("Venta guardada y stock descontado."); st.rerun()
         else:
             st.info("Agregá productos al ticket.")
