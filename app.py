@@ -708,6 +708,24 @@ def render_last_ticket():
     if not filas_a4:
         filas_a4="<tr><td colspan='4' style='text-align:center'>Sin productos</td></tr>"
 
+    # Cuenta corriente del cliente para Remito A4
+    saldo_anterior = 0.0
+    pago_realizado = float(getattr(row, "pagado", 0) or 0)
+    saldo_actual = 0.0
+    try:
+        resumen_clientes = clientes_resumen()
+        cliente_id_actual = int(getattr(row, "cliente_id", 0) or 0)
+        if not resumen_clientes.empty and cliente_id_actual:
+            rr = resumen_clientes[resumen_clientes["id"] == cliente_id_actual]
+            if not rr.empty:
+                saldo_actual = float(rr.iloc[0].get("Debe", 0) or 0)
+        impacto_venta = float(row.total or 0) - pago_realizado
+        saldo_anterior = max(saldo_actual - impacto_venta, 0)
+    except Exception:
+        pago_realizado = float(getattr(row, "pagado", 0) or 0)
+        saldo_actual = max(float(row.total or 0) - pago_realizado, 0)
+        saldo_anterior = 0.0
+
     a4=f"""
 <!doctype html>
 <html>
@@ -737,6 +755,12 @@ td {{ padding:10px; border:1px solid #333; vertical-align:top; }}
 .total-box {{ width:45%; border:2px solid #111; padding:16px; }}
 .total-line {{ display:flex; justify-content:space-between; font-size:17px; margin:8px 0; }}
 .total-final {{ font-size:26px; font-weight:900; border-top:2px solid #111; padding-top:12px; margin-top:12px; }}
+.cc-box {{ margin-top:18px; border:2px solid #111; padding:14px; }}
+.cc-box h3 {{ margin:0 0 10px; font-size:16px; text-transform:uppercase; }}
+.cc-grid {{ display:grid; grid-template-columns: repeat(4, 1fr); gap:10px; }}
+.cc-item {{ border:1px solid #333; padding:10px; min-height:58px; }}
+.cc-label {{ font-size:12px; color:#555; text-transform:uppercase; }}
+.cc-value {{ font-size:17px; font-weight:800; margin-top:4px; }}
 .obs {{ margin-top:26px; border:1px solid #111; min-height:90px; padding:12px; }}
 .firmas {{ display:grid; grid-template-columns:1fr 1fr; gap:55px; margin-top:58px; }}
 .firma {{ border-top:2px solid #111; text-align:center; padding-top:10px; font-weight:700; }}
@@ -787,8 +811,19 @@ td {{ padding:10px; border:1px solid #333; vertical-align:top; }}
 
     <div class='total-wrap'>
         <div class='total-box'>
-            <div class='total-line'><span>Subtotal</span><b>{money(row.total)}</b></div>
-            <div class='total-line total-final'><span>TOTAL</span><span>{money(row.total)}</span></div>
+            <div class='total-line'><span>Subtotal pedido actual</span><b>{money(row.total)}</b></div>
+            <div class='total-line'><span>Pago realizado</span><b>{money(pago_realizado)}</b></div>
+            <div class='total-line total-final'><span>TOTAL PEDIDO</span><span>{money(row.total)}</span></div>
+        </div>
+    </div>
+
+    <div class='cc-box'>
+        <h3>Cuenta corriente del cliente</h3>
+        <div class='cc-grid'>
+            <div class='cc-item'><div class='cc-label'>Saldo anterior</div><div class='cc-value'>{money(saldo_anterior)}</div></div>
+            <div class='cc-item'><div class='cc-label'>Pedido actual</div><div class='cc-value'>{money(row.total)}</div></div>
+            <div class='cc-item'><div class='cc-label'>Pago realizado</div><div class='cc-value'>{money(pago_realizado)}</div></div>
+            <div class='cc-item'><div class='cc-label'>Saldo actualizado</div><div class='cc-value'>{money(saldo_actual)}</div></div>
         </div>
     </div>
 
